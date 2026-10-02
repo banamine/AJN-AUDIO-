@@ -68,20 +68,10 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
     assert.equal(demoAfterHours?.segments.length, 4);
     assert.equal(demoPodcasts?.episodes.length, 2);
     assert.equal(await prisma.channel.count({ where: { type: 'LIVE', streamUrl: { not: null } } }), 3);
-    await prisma.channel.create({
-      data: {
-        slug: 'integration-schedule', name: 'Integration Schedule', type: 'SIMULATED', cycleStart: new Date(Date.now() - 100),
-        segments: { create: [
-          { position: 0, title: 'Timer First', audioUrl: 'https://audio.test/timer-first.mp3', durationSeconds: 2 },
-          { position: 1, title: 'Timer Second', audioUrl: 'https://audio.test/timer-second.mp3', durationSeconds: 2 },
-        ] },
-      },
-    });
 
-    const { app, startMetadataNotifications, stopMetadataNotifications } = await import('../server/index.ts');
+    const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks } = await import('../server/index.ts');
     await startMetadataNotifications();
-      const { getMetadataNotificationStatus } = await import('../server/index.ts');
-      assert.equal(getMetadataNotificationStatus(), 'listening');
+    assert.equal(getMetadataNotificationStatus(), 'listening');
     const httpServer = app.listen(0, '127.0.0.1');
     await once(httpServer, 'listening');
     const address = httpServer.address();
@@ -170,26 +160,64 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
         ]);
         assert.match(new TextDecoder().decode(reconnectFrame.value), /After reconnect/);
         assert.deepEqual(uncaughtErrors, []);
+
+        // NOTIFY is not queued for a disconnected listener, so an update made while LISTEN is down
+        // must still reach connected SSE clients once the listener reconnects.
+        process.env.RADIO_LISTEN_PING_MS = '100';
+        process.env.RADIO_LISTEN_PING_TIMEOUT_MS = '200';
+        metadataListenerTestHooks.drop();
+        await waitForStatus('reconnecting');
+        await prisma.channel.update({
+          where: { slug: 'forma' },
+          data: { currentTitle: 'Missed during outage', currentArtist: null, currentAlbum: null, metadataUpdatedAt: new Date() },
+        });
+        await waitForStatus('listening');
+        const resyncFrame = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => { const timeout = setTimeout(() => reject(new Error('Timed out waiting for resync after LISTEN reconnect')), 4000); timeout.unref(); }),
+        ]);
+        assert.match(new TextDecoder().decode(resyncFrame.value), /Missed during outage/);
+
+        // A connection that goes silent without emitting 'error' or 'end' must be caught by the ping.
+        metadataListenerTestHooks.hang();
+        await waitForStatus('reconnecting');
+        await waitForStatus('listening');
+        assert.deepEqual(uncaughtErrors, []);
       } finally {
+        delete process.env.RADIO_LISTEN_PING_MS;
+        delete process.env.RADIO_LISTEN_PING_TIMEOUT_MS;
         process.off('uncaughtExceptionMonitor', captureUncaught);
       }
       await reader.cancel();
       eventsAbort.abort();
 
+      // Created right before use: the cycle is only 4 s long, so an earlier cycleStart would drift out of phase.
+      await prisma.channel.create({
+        data: {
+          slug: 'integration-schedule', name: 'Integration Schedule', type: 'SIMULATED', cycleStart: new Date(Date.now() - 100),
+          segments: { create: [
+            { position: 0, title: 'Timer First', audioUrl: 'https://audio.test/timer-first.mp3', durationSeconds: 2 },
+            { position: 1, title: 'Timer Second', audioUrl: 'https://audio.test/timer-second.mp3', durationSeconds: 2 },
+          ] },
+        },
+      });
       const scheduleAbort = new AbortController();
       const scheduleResponse = await fetch(`${api}/api/channels/integration-schedule/events`, { signal: scheduleAbort.signal });
       const scheduleReader = scheduleResponse.body?.getReader();
       assert.ok(scheduleReader);
       const scheduleFirst = await scheduleReader.read();
-      assert.match(new TextDecoder().decode(scheduleFirst.value), /Timer First/);
+      const firstTitle = /Timer (First|Second)/.exec(new TextDecoder().decode(scheduleFirst.value))?.[0];
+      assert.ok(firstTitle, 'first schedule frame names a timed segment');
       const scheduleNext = await Promise.race([
         scheduleReader.read(),
         new Promise<never>((_, reject) => { const timeout = setTimeout(() => reject(new Error('Timed out waiting for scheduled track transition')), 4000); timeout.unref(); }),
       ]);
-      assert.match(new TextDecoder().decode(scheduleNext.value), /Timer Second/);
+      const secondTitle = firstTitle === 'Timer First' ? 'Timer Second' : 'Timer First';
+      assert.match(new TextDecoder().decode(scheduleNext.value), new RegExp(secondTitle));
       await scheduleReader.cancel();
       scheduleAbort.abort();
     } finally {
+      httpServer.closeAllConnections();
       await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()));
       await stopMetadataNotifications();
     }

@@ -121,6 +121,58 @@ let metadataListenerRetry: ReturnType<typeof setTimeout> | null = null;
 let metadataListenerStatus: 'listening' | 'reconnecting' | 'off' = 'off';
 let metadataListenerRetryAttempt = 0;
 let metadataListenerOutageLogged = false;
+let metadataListenerPing: ReturnType<typeof setInterval> | null = null;
+const listenerPingMs = () => Number(process.env.RADIO_LISTEN_PING_MS ?? 30_000);
+const listenerPingTimeoutMs = () => Number(process.env.RADIO_LISTEN_PING_TIMEOUT_MS ?? 5_000);
+const listenerConnectTimeoutMs = () => Number(process.env.RADIO_LISTEN_CONNECT_TIMEOUT_MS ?? 10_000);
+
+function stopMetadataListenerPing() {
+  if (metadataListenerPing) clearInterval(metadataListenerPing);
+  metadataListenerPing = null;
+}
+
+/** Detects half-open connections (e.g. a silent NAT or proxy drop) that never emit 'error' or 'end'. */
+function startMetadataListenerPing(client: Client, onFailure: (error?: Error) => void) {
+  stopMetadataListenerPing();
+  const interval = listenerPingMs();
+  if (!(interval > 0)) return;
+  let inFlight = false;
+  metadataListenerPing = setInterval(() => {
+    if (inFlight || metadataListener !== client) return;
+    inFlight = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('LISTEN connection ping timed out')), listenerPingTimeoutMs());
+    });
+    Promise.race([client.query('SELECT 1'), timeout])
+      .catch(error => onFailure(error as Error))
+      .finally(() => { if (timer) clearTimeout(timer); inFlight = false; });
+  }, interval);
+  metadataListenerPing.unref?.();
+}
+
+/** Ends a LISTEN client and destroys its socket so a hung connection cannot leak. */
+function discardListenerClient(client: Client) {
+  void client.end().catch(() => undefined);
+  const stream = (client as unknown as { connection?: { stream?: { destroy: () => void } } }).connection?.stream;
+  try { stream?.destroy(); } catch { /* socket already closed */ }
+}
+
+/** NOTIFY messages are not queued for a disconnected listener, so re-send current state after any reconnect. */
+function resyncSubscribedChannels() {
+  for (const slug of subscribers.keys()) void broadcast(slug);
+}
+
+/** Test-only: simulate a dropped or hung LISTEN connection without stopping the database. */
+export const metadataListenerTestHooks = {
+  drop() {
+    const stream = (metadataListener as unknown as { connection?: { stream?: { destroy: (error?: Error) => void } } } | null)?.connection?.stream;
+    stream?.destroy(new Error('simulated connection drop'));
+  },
+  hang() {
+    if (metadataListener) (metadataListener as unknown as { query: () => Promise<never> }).query = () => new Promise<never>(() => undefined);
+  },
+};
 
 function scheduleMetadataListenerReconnect() {
   if (!metadataListenerEnabled || metadataListenerRetry) return;
@@ -137,16 +189,22 @@ function scheduleMetadataListenerReconnect() {
 async function connectMetadataListener() {
   if (!metadataListenerEnabled || metadataListener) return;
   metadataListenerStatus = 'reconnecting';
-  const client = new Client({ connectionString: process.env.DATABASE_URL ?? 'postgresql://radio:radio@localhost:5432/ajn_radio?schema=public' });
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL ?? 'postgresql://radio:radio@localhost:5432/ajn_radio?schema=public',
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    connectionTimeoutMillis: listenerConnectTimeoutMs(),
+  });
   metadataListener = client;
   const onFailure = (error?: Error) => {
     if (metadataListener !== client) return;
     metadataListener = null;
+    stopMetadataListenerPing();
     if (error && !metadataListenerOutageLogged) {
       console.warn('Cross-instance live metadata notifications are unavailable; reconnecting.', error.message);
       metadataListenerOutageLogged = true;
     }
-    void client.end().catch(() => undefined);
+    discardListenerClient(client);
     scheduleMetadataListenerReconnect();
   };
   client.on('error', onFailure);
@@ -169,6 +227,8 @@ async function connectMetadataListener() {
     metadataListenerRetryAttempt = 0;
     if (metadataListenerOutageLogged) console.info('Cross-instance live metadata notifications reconnected.');
     metadataListenerOutageLogged = false;
+    startMetadataListenerPing(client, onFailure);
+    resyncSubscribedChannels();
   } catch (error) {
     onFailure(error as Error);
   }
@@ -205,6 +265,7 @@ export async function stopMetadataNotifications() {
   metadataListenerStatus = 'off';
   metadataListenerRetryAttempt = 0;
   metadataListenerOutageLogged = false;
+  stopMetadataListenerPing();
   if (metadataListenerRetry) clearTimeout(metadataListenerRetry);
   metadataListenerRetry = null;
   const client = metadataListener;
