@@ -69,7 +69,7 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
     assert.equal(demoPodcasts?.episodes.length, 2);
     assert.equal(await prisma.channel.count({ where: { type: 'LIVE', streamUrl: { not: null } } }), 3);
 
-    const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks } = await import('../server/index.ts');
+    const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks, getSseConnectionCount } = await import('../server/index.ts');
     await startMetadataNotifications();
     assert.equal(getMetadataNotificationStatus(), 'listening');
     const httpServer = app.listen(0, '127.0.0.1');
@@ -133,6 +133,63 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for live SSE metadata')), 3000)),
       ]);
       assert.match(new TextDecoder().decode(pushedFrame.value), /Live API Test/);
+
+      // A2: an ingest call replaces the whole record; omitted artist/album must not keep the previous track's values.
+      const ingest = (slug: string, body: unknown) => fetch(`${api}/api/ingest/channels/${slug}/now-playing`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer integration-token' }, body: JSON.stringify(body),
+      });
+      assert.equal((await ingest('sundown-club', { title: 'Track One', artist: 'Artist One', album: 'Album One' })).status, 200);
+      assert.equal((await ingest('sundown-club', { title: 'Track Two' })).status, 200);
+      const replaced = await (await fetch(`${api}/api/channels/sundown-club/now-playing`)).json() as { title: string; artist: string | null; album: string | null };
+      assert.equal(replaced.title, 'Track Two');
+      assert.equal(replaced.artist, null);
+      assert.equal(replaced.album, null);
+
+      const settle = async (expected: number) => {
+        const deadline = Date.now() + 3000;
+        while (getSseConnectionCount() !== expected && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(getSseConnectionCount(), expected);
+      };
+      const sseBaseline = getSseConnectionCount();
+
+      // A3: a client joining when state is unchanged and no cached frame is usable still gets an initial frame at once.
+      process.env.RADIO_FRAME_CACHE_MS = '0';
+      const lateAbort = new AbortController();
+      try {
+        const early = await fetch(`${api}/api/channels/daylight-fm/events`, { signal: lateAbort.signal });
+        const earlyReader = early.body!.getReader();
+        assert.match(new TextDecoder().decode((await earlyReader.read()).value), /event: now-playing/);
+        const late = await fetch(`${api}/api/channels/daylight-fm/events`, { signal: lateAbort.signal });
+        const lateReader = late.body!.getReader();
+        const lateFrame = await Promise.race([
+          lateReader.read(),
+          new Promise<never>((_, reject) => { const timeout = setTimeout(() => reject(new Error('Late SSE joiner received no initial frame')), 2000); timeout.unref(); }),
+        ]);
+        assert.match(new TextDecoder().decode(lateFrame.value), /On the Regular/);
+      } finally {
+        delete process.env.RADIO_FRAME_CACHE_MS;
+        lateAbort.abort();
+      }
+      await settle(sseBaseline);
+
+      // A4: unknown channels get a plain 404 and never register a subscriber.
+      const connectionsBefore = getSseConnectionCount();
+      const ghost = await fetch(`${api}/api/channels/does-not-exist/events`);
+      assert.equal(ghost.status, 404);
+      assert.match(ghost.headers.get('content-type') ?? '', /application\/json/);
+      await ghost.text();
+      assert.equal(getSseConnectionCount(), connectionsBefore);
+
+      // Connection cap: a full process refuses new streams with 503 + Retry-After.
+      process.env.RADIO_MAX_SSE_CONNECTIONS = String(getSseConnectionCount());
+      try {
+        const capped = await fetch(`${api}/api/channels/forma/events`);
+        assert.equal(capped.status, 503);
+        assert.equal(capped.headers.get('retry-after'), '5');
+        await capped.text();
+      } finally {
+        delete process.env.RADIO_MAX_SSE_CONNECTIONS;
+      }
 
       const uncaughtErrors: unknown[] = [];
       const captureUncaught = (error: unknown) => uncaughtErrors.push(error);

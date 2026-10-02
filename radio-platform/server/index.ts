@@ -83,16 +83,20 @@ app.get('/api/channels/:slug/episodes', async (req, res) => {
   } catch (error) { res.status(503).json({ error: 'Podcast episodes are unavailable', detail: (error as Error).message }); }
 });
 
+class ChannelNotFoundError extends Error {}
+/** A channel row exists but cannot produce a playable position (e.g. a simulated channel without timed segments). */
+class ChannelConfigError extends Error {}
+
 async function resolveNowPlaying(slug: string) {
   const channel = await prisma.channel.findUnique({ where: { slug }, include: { segments: { orderBy: { position: 'asc' } } } });
   if (!channel || !channel.active) return null;
   if (channel.type === 'SIMULATED') {
-    if (!channel.cycleStart || !channel.segments.length) throw new Error('Simulated channel has no cycle start or timed segments');
+    if (!channel.cycleStart || !channel.segments.length) throw new ChannelConfigError('Simulated channel has no cycle start or timed segments');
     const timeline = resolveTimelinePosition(channel.segments.map(segment => ({
       id: segment.id, position: segment.position, title: segment.title, artist: segment.artist,
       audioUrl: segment.audioUrl, durationSeconds: segment.durationSeconds,
     })), channel.cycleStart);
-    if (!timeline) throw new Error('Simulated channel has no valid timed segments');
+    if (!timeline) throw new ChannelConfigError('Simulated channel has no valid timed segments');
     return { type: 'simulated', ...timeline, serverTime: new Date().toISOString() };
   }
   return {
@@ -234,22 +238,47 @@ async function connectMetadataListener() {
   }
 }
 
+type NowPlayingResult = NonNullable<Awaited<ReturnType<typeof resolveNowPlaying>>>;
+
+function fingerprintOf(nowPlaying: NowPlayingResult) {
+  return 'segmentIndex' in nowPlaying
+    ? JSON.stringify([nowPlaying.segmentIndex, nowPlaying.segment?.id, nowPlaying.segment?.title, nowPlaying.segment?.artist])
+    : JSON.stringify([nowPlaying.title, nowPlaying.artist, nowPlaying.album, nowPlaying.metadataUpdatedAt]);
+}
+const nowPlayingFrame = (nowPlaying: NowPlayingResult) => `event: now-playing\ndata: ${JSON.stringify(nowPlaying)}\n\n`;
+const errorFrame = (message: string) => `event: error\ndata: ${JSON.stringify({ error: message })}\n\n`;
+const frameCacheMs = () => Number(process.env.RADIO_FRAME_CACHE_MS ?? 2000);
+
+/**
+ * The frame a newly connected client receives. It is always produced for that client,
+ * independent of the fan-out fingerprint, so a late joiner never waits for the next change.
+ * A very short cache absorbs connection bursts; clients compensate for its age via serverTime.
+ */
+async function initialFrameFor(slug: string): Promise<string> {
+  const cached = frames.get(slug);
+  if (cached && Date.now() - cached.created < frameCacheMs()) return cached.body;
+  const nowPlaying = await resolveNowPlaying(slug);
+  if (!nowPlaying) throw new ChannelNotFoundError('Channel not found');
+  const frame = nowPlayingFrame(nowPlaying);
+  frames.set(slug, { body: frame, created: Date.now() });
+  if (!fingerprints.has(slug)) fingerprints.set(slug, fingerprintOf(nowPlaying));
+  return frame;
+}
+
 async function broadcast(slug: string) {
   const channelClients = subscribers.get(slug);
   if (!channelClients?.size) return;
   try {
     const nowPlaying = await resolveNowPlaying(slug);
-    if (!nowPlaying) throw new Error('Channel not found');
-    const fingerprint = 'segmentIndex' in nowPlaying
-      ? JSON.stringify([nowPlaying.segmentIndex, nowPlaying.segment?.id, nowPlaying.segment?.title, nowPlaying.segment?.artist])
-      : JSON.stringify([nowPlaying.title, nowPlaying.artist, nowPlaying.album, nowPlaying.metadataUpdatedAt]);
+    if (!nowPlaying) throw new ChannelNotFoundError('Channel not found');
+    const fingerprint = fingerprintOf(nowPlaying);
     if (fingerprints.get(slug) === fingerprint) return;
     fingerprints.set(slug, fingerprint);
-    const frame = `event: now-playing\ndata: ${JSON.stringify(nowPlaying)}\n\n`;
+    const frame = nowPlayingFrame(nowPlaying);
     frames.set(slug, { body: frame, created: Date.now() });
     channelClients.forEach(client => { if (!client.writableEnded) client.write(frame); });
   } catch (error) {
-    const frame = `event: error\ndata: ${JSON.stringify({ error: (error as Error).message })}\n\n`;
+    const frame = errorFrame((error as Error).message);
     channelClients.forEach(client => { if (!client.writableEnded) client.write(frame); });
   }
 }
@@ -294,8 +323,27 @@ async function scheduleNextUpdate(slug: string) {
   }
 }
 
+let sseConnectionCount = 0;
+export function getSseConnectionCount() { return sseConnectionCount; }
+
 app.get('/api/channels/:slug/events', async (req, res) => {
   const slug = req.params.slug;
+  if (sseConnectionCount >= Number(process.env.RADIO_MAX_SSE_CONNECTIONS ?? 5000)) {
+    res.setHeader('Retry-After', '5');
+    return res.status(503).json({ error: 'Too many live connections' });
+  }
+  // Resolve before opening the stream: unknown channels get a plain 404 instead of a stream that never ends.
+  let initialFrame: string;
+  try { initialFrame = await initialFrameFor(slug); }
+  catch (error) {
+    if (error instanceof ChannelNotFoundError) return res.status(404).json({ error: 'Channel not found' });
+    if (!(error instanceof ChannelConfigError)) {
+      console.error('Live updates unavailable', error);
+      return res.status(503).json({ error: 'Live updates are unavailable' });
+    }
+    initialFrame = errorFrame(error.message);
+  }
+  if (res.destroyed) return;
   res.status(200).set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -306,13 +354,11 @@ app.get('/api/channels/:slug/events', async (req, res) => {
   let channelClients = subscribers.get(slug);
   if (!channelClients) { channelClients = new Set<Response>(); subscribers.set(slug, channelClients); }
   channelClients.add(res);
-  const cached = frames.get(slug);
-  if (cached && Date.now() - cached.created < 15000) res.write(cached.body);
-  else await broadcast(slug);
-  void scheduleNextUpdate(slug);
+  sseConnectionCount++;
   const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': keepalive\n\n'); }, 25000);
   res.on('close', () => {
     clearInterval(heartbeat);
+    sseConnectionCount--;
     const clients = subscribers.get(slug);
     clients?.delete(res);
     if (!clients?.size) {
@@ -322,6 +368,8 @@ app.get('/api/channels/:slug/events', async (req, res) => {
       timers.delete(slug);
     }
   });
+  res.write(initialFrame);
+  void scheduleNextUpdate(slug);
 });
 
 const liveMetadataSchema = z.object({
@@ -342,7 +390,8 @@ app.post('/api/ingest/channels/:slug/now-playing', async (req, res) => {
     if (existing.type !== 'LIVE') return res.status(409).json({ error: 'Metadata ingest is for live channels only' });
     const channel = await prisma.channel.update({
       where: { slug: req.params.slug },
-      data: { currentTitle: parsed.data.title, currentArtist: parsed.data.artist, currentAlbum: parsed.data.album, metadataUpdatedAt: new Date() },
+      // An ingest call replaces the whole now-playing record: Prisma ignores undefined, so omitted fields must be written as null.
+      data: { currentTitle: parsed.data.title, currentArtist: parsed.data.artist ?? null, currentAlbum: parsed.data.album ?? null, metadataUpdatedAt: new Date() },
     });
     await prisma.$queryRaw`SELECT pg_notify('radio_metadata', ${channel.slug}) IS NULL AS notified`;
     void broadcast(channel.slug);
