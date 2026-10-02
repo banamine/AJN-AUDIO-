@@ -157,8 +157,7 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
       };
       const sseBaseline = getSseConnectionCount();
 
-      // A3: a client joining when state is unchanged and no cached frame is usable still gets an initial frame at once.
-      process.env.RADIO_FRAME_CACHE_MS = '0';
+      // A3: even with an unchanged fingerprint, each new client gets an immediate frame.
       const lateAbort = new AbortController();
       try {
         const early = await fetch(`${api}/api/channels/daylight-fm/events`, { signal: lateAbort.signal });
@@ -172,7 +171,6 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
         ]);
         assert.match(new TextDecoder().decode(lateFrame.value), /"type":"live"/);
       } finally {
-        delete process.env.RADIO_FRAME_CACHE_MS;
         lateAbort.abort();
       }
       await settle(sseBaseline);
@@ -183,6 +181,13 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
       assert.equal(ghost.status, 404);
       assert.match(ghost.headers.get('content-type') ?? '', /application\/json/);
       await ghost.text();
+      assert.equal(getSseConnectionCount(), connectionsBefore);
+
+      const inactive = await prisma.channel.create({
+        data: { slug: 'inactive-events', name: 'Inactive Events', type: 'LIVE', streamUrl: 'https://audio.test/inactive', active: false },
+      });
+      const inactiveResponse = await fetch(`${api}/api/channels/${inactive.slug}/events`);
+      assert.equal(inactiveResponse.status, 404);
       assert.equal(getSseConnectionCount(), connectionsBefore);
 
       // Connection cap: a full process refuses new streams with 503 + Retry-After.

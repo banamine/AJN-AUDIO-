@@ -137,7 +137,6 @@ app.get('/api/channels/:slug/now-playing', async (req, res) => {
 
 const subscribers = new Map<string, Set<Response>>();
 const timers = new Map<string, ReturnType<typeof setTimeout> | null>();
-const frames = new Map<string, { body: string; created: number }>();
 const fingerprints = new Map<string, string>();
 let metadataListener: Client | null = null;
 let metadataListenerEnabled = false;
@@ -267,20 +266,15 @@ function fingerprintOf(nowPlaying: NowPlayingResult) {
 }
 const nowPlayingFrame = (nowPlaying: NowPlayingResult) => `event: now-playing\ndata: ${JSON.stringify(nowPlaying)}\n\n`;
 const errorFrame = (message: string) => `event: error\ndata: ${JSON.stringify({ error: message })}\n\n`;
-const frameCacheMs = () => Number(process.env.RADIO_FRAME_CACHE_MS ?? 2000);
-
 /**
  * The frame a newly connected client receives. It is always produced for that client,
  * independent of the fan-out fingerprint, so a late joiner never waits for the next change.
- * A very short cache absorbs connection bursts; clients compensate for its age via serverTime.
+ * Resolve on every connection so deactivated channels cannot be served from stale cache.
  */
 async function initialFrameFor(slug: string): Promise<string> {
-  const cached = frames.get(slug);
-  if (cached && Date.now() - cached.created < frameCacheMs()) return cached.body;
   const nowPlaying = await resolveNowPlaying(slug);
   if (!nowPlaying) throw new ChannelNotFoundError('Channel not found');
   const frame = nowPlayingFrame(nowPlaying);
-  frames.set(slug, { body: frame, created: Date.now() });
   if (!fingerprints.has(slug)) fingerprints.set(slug, fingerprintOf(nowPlaying));
   return frame;
 }
@@ -295,7 +289,6 @@ async function broadcast(slug: string) {
     if (fingerprints.get(slug) === fingerprint) return;
     fingerprints.set(slug, fingerprint);
     const frame = nowPlayingFrame(nowPlaying);
-    frames.set(slug, { body: frame, created: Date.now() });
     channelClients.forEach(client => { if (!client.writableEnded) client.write(frame); });
   } catch (error) {
     const frame = errorFrame((error as Error).message);
@@ -382,7 +375,7 @@ app.get('/api/channels/:slug/events', async (req, res) => {
     const clients = subscribers.get(slug);
     clients?.delete(res);
     if (!clients?.size) {
-      subscribers.delete(slug); frames.delete(slug); fingerprints.delete(slug);
+      subscribers.delete(slug); fingerprints.delete(slug);
       const timer = timers.get(slug);
       if (timer) clearTimeout(timer);
       timers.delete(slug);
