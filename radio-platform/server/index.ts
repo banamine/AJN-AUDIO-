@@ -2,33 +2,50 @@ import 'dotenv/config';
 import cors from 'cors';
 import express, { type Response } from 'express';
 import { Client } from 'pg';
+import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { prisma } from './db.ts';
 import { resolveTimelinePosition } from '../shared/timeline.ts';
+import type { Channel as PrismaChannel, PodcastEpisode, RadioSegment } from '../src/generated/prisma/client.ts';
 
 export const app = express();
 const port = Number(process.env.PORT ?? 3000);
 app.use(cors());
 app.use(express.json({ limit: '32kb' }));
 
-function toChannelDto(channel: any) {
+type ChannelWithOptionalContent = PrismaChannel & {
+  segments?: RadioSegment[];
+  episodes?: PodcastEpisode[];
+};
+
+function toChannelDto(channel: ChannelWithOptionalContent) {
   return {
     id: channel.id, slug: channel.slug, name: channel.name, description: channel.description,
     genre: channel.genre, city: channel.city, frequency: channel.frequency,
     type: String(channel.type).toLowerCase(), streamUrl: channel.streamUrl,
     cycleStart: channel.cycleStart, currentTitle: channel.currentTitle,
     currentArtist: channel.currentArtist, currentAlbum: channel.currentAlbum,
-    segments: (channel.segments ?? []).map((segment: any) => ({
+    segments: (channel.segments ?? []).map(segment => ({
       id: segment.id, position: segment.position, title: segment.title, artist: segment.artist,
       audioUrl: segment.audioUrl, durationSeconds: segment.durationSeconds,
     })),
-    episodes: (channel.episodes ?? []).map((episode: any) => ({
+    episodes: (channel.episodes ?? []).map(episode => ({
       id: episode.id, title: episode.title, description: episode.description,
       audioUrl: episode.audioUrl, durationSeconds: episode.durationSeconds, publishedAt: episode.publishedAt,
     })),
   };
+}
+
+export function ingestTokenMatches(expectedToken: string, authorization: string) {
+  const expected = Buffer.from(`Bearer ${expectedToken}`, 'utf8');
+  const received = Buffer.from(authorization, 'utf8');
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+function logApiFailure(context: string, error: unknown) {
+  console.error(context, error);
 }
 
 app.get('/api/health', async (_req, res) => {
@@ -51,7 +68,7 @@ app.get('/api/channels', async (req, res) => {
     const page = hasMore ? channels.slice(0, limit) : channels;
     res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
     res.json({ channels: page.map(toChannelDto), nextCursor: hasMore ? page[page.length - 1].id : null, serverTime: new Date().toISOString() });
-  } catch (error) { res.status(503).json({ error: 'Radio catalog is unavailable', detail: (error as Error).message }); }
+  } catch (error) { logApiFailure('Radio catalog query failed', error); res.status(503).json({ error: 'Radio catalog is unavailable' }); }
 });
 
 app.get('/api/channels/:slug/content', async (req, res) => {
@@ -60,7 +77,7 @@ app.get('/api/channels/:slug/content', async (req, res) => {
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
     res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     res.json({ segments: channel.segments.map(segment => ({ id: segment.id, position: segment.position, title: segment.title, artist: segment.artist, audioUrl: segment.audioUrl, durationSeconds: segment.durationSeconds })) });
-  } catch (error) { res.status(503).json({ error: 'Channel content is unavailable', detail: (error as Error).message }); }
+  } catch (error) { logApiFailure('Channel content query failed', error); res.status(503).json({ error: 'Channel content is unavailable' }); }
 });
 
 app.get('/api/channels/:slug/episodes', async (req, res) => {
@@ -79,7 +96,7 @@ app.get('/api/channels/:slug/episodes', async (req, res) => {
     const page = hasMore ? episodes.slice(0, limit) : episodes;
     res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     res.json({ episodes: page, nextCursor: hasMore ? page[page.length - 1].id : null });
-  } catch (error) { res.status(503).json({ error: 'Podcast episodes are unavailable', detail: (error as Error).message }); }
+  } catch (error) { logApiFailure('Podcast episode query failed', error); res.status(503).json({ error: 'Podcast episodes are unavailable' }); }
 });
 
 class ChannelNotFoundError extends Error {}
@@ -111,7 +128,11 @@ app.get('/api/channels/:slug/now-playing', async (req, res) => {
     if (!nowPlaying) return res.status(404).json({ error: 'Channel not found' });
     res.setHeader('Cache-Control', 'no-store');
     res.json(nowPlaying);
-  } catch (error) { res.status(409).json({ error: (error as Error).message }); }
+  } catch (error) {
+    if (error instanceof ChannelConfigError) return res.status(409).json({ error: 'Channel is not configured for playback' });
+    logApiFailure('Now-playing query failed', error);
+    return res.status(503).json({ error: 'Now-playing information is unavailable' });
+  }
 });
 
 const subscribers = new Map<string, Set<Response>>();
@@ -380,7 +401,7 @@ const liveMetadataSchema = z.object({
 app.post('/api/ingest/channels/:slug/now-playing', async (req, res) => {
   const expectedToken = process.env.RADIO_INGEST_TOKEN;
   if (!expectedToken) return res.status(503).json({ error: 'Metadata ingest is not configured' });
-  if (req.get('authorization') !== `Bearer ${expectedToken}`) return res.status(401).json({ error: 'Unauthorized' });
+  if (!ingestTokenMatches(expectedToken, req.get('authorization') ?? '')) return res.status(401).json({ error: 'Unauthorized' });
   const parsed = liveMetadataSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
@@ -395,7 +416,7 @@ app.post('/api/ingest/channels/:slug/now-playing', async (req, res) => {
     await prisma.$queryRaw`SELECT pg_notify('radio_metadata', ${channel.slug}) IS NULL AS notified`;
     void broadcast(channel.slug);
     res.json({ updated: true });
-  } catch (error) { res.status(503).json({ error: 'Live metadata could not be published', detail: (error as Error).message }); }
+  } catch (error) { logApiFailure('Live metadata ingest failed', error); res.status(503).json({ error: 'Live metadata could not be published' }); }
 });
 
 async function start() {

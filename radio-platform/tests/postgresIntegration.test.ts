@@ -69,7 +69,10 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
     assert.equal(demoPodcasts?.episodes.length, 2);
     assert.equal(await prisma.channel.count({ where: { type: 'LIVE', streamUrl: { not: null } } }), 3);
 
-    const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks, getSseConnectionCount } = await import('../server/index.ts');
+    const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks, getSseConnectionCount, ingestTokenMatches } = await import('../server/index.ts');
+    assert.equal(ingestTokenMatches('secret', 'Bearer secret'), true);
+    assert.equal(ingestTokenMatches('secret', 'Bearer secretx'), false);
+    assert.equal(ingestTokenMatches('secret', 'Bearer short'), false);
     await startMetadataNotifications();
     assert.equal(getMetadataNotificationStatus(), 'listening');
     const httpServer = app.listen(0, '127.0.0.1');
@@ -273,6 +276,18 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
       assert.match(new TextDecoder().decode(scheduleNext.value), new RegExp(secondTitle));
       await scheduleReader.cancel();
       scheduleAbort.abort();
+
+      // B6: database details stay in server logs, while API clients receive a generic 503.
+      await prisma.$executeRawUnsafe('ALTER TABLE channels RENAME TO channels_temporarily_unavailable');
+      try {
+        const unavailable = await fetch(`${api}/api/channels/forma/now-playing`);
+        assert.equal(unavailable.status, 503);
+        const unavailableBody = await unavailable.json() as Record<string, unknown>;
+        assert.equal(unavailableBody.detail, undefined);
+        assert.deepEqual(unavailableBody, { error: 'Now-playing information is unavailable' });
+      } finally {
+        await prisma.$executeRawUnsafe('ALTER TABLE channels_temporarily_unavailable RENAME TO channels');
+      }
     } finally {
       httpServer.closeAllConnections();
       await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()));
