@@ -25,6 +25,7 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
   const socketServer = new PGLiteSocketServer({ db, host: '127.0.0.1', port, maxConnections: 8 });
   const connectionString = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
   const wireClient = new Client({ connectionString });
+  wireClient.on('error', () => undefined);
   let prisma: PrismaClient | undefined;
   try {
     await socketServer.start();
@@ -79,6 +80,8 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
 
     const { app, startMetadataNotifications, stopMetadataNotifications } = await import('../server/index.ts');
     await startMetadataNotifications();
+      const { getMetadataNotificationStatus } = await import('../server/index.ts');
+      assert.equal(getMetadataNotificationStatus(), 'listening');
     const httpServer = app.listen(0, '127.0.0.1');
     await once(httpServer, 'listening');
     const address = httpServer.address();
@@ -87,7 +90,7 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
     try {
       const health = await fetch(`${api}/api/health`);
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { status: 'ok', database: 'connected' });
+      assert.deepEqual(await health.json(), { status: 'ok', database: 'connected', notifications: 'listening' });
 
       const catalogResponse = await fetch(`${api}/api/channels?limit=2`);
       assert.equal(catalogResponse.status, 200);
@@ -140,6 +143,36 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for live SSE metadata')), 3000)),
       ]);
       assert.match(new TextDecoder().decode(pushedFrame.value), /Live API Test/);
+
+      const uncaughtErrors: unknown[] = [];
+      const captureUncaught = (error: unknown) => uncaughtErrors.push(error);
+      process.on('uncaughtExceptionMonitor', captureUncaught);
+      await socketServer.stop();
+      const waitForStatus = async (status: string) => {
+        const deadline = Date.now() + 5000;
+        while (getMetadataNotificationStatus() !== status && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.equal(getMetadataNotificationStatus(), status);
+      };
+      try {
+        await waitForStatus('reconnecting');
+        await socketServer.start();
+        await waitForStatus('listening');
+        const reconnectUpdate = await fetch(`${api}/api/ingest/channels/forma/now-playing`, {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer integration-token' },
+          body: JSON.stringify({ title: 'After reconnect', artist: 'Recovered Artist' }),
+        });
+        assert.equal(reconnectUpdate.status, 200);
+        const reconnectFrame = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => { const timeout = setTimeout(() => reject(new Error('Timed out waiting for SSE after LISTEN reconnect')), 3000); timeout.unref(); }),
+        ]);
+        assert.match(new TextDecoder().decode(reconnectFrame.value), /After reconnect/);
+        assert.deepEqual(uncaughtErrors, []);
+      } finally {
+        process.off('uncaughtExceptionMonitor', captureUncaught);
+      }
       await reader.cancel();
       eventsAbort.abort();
 

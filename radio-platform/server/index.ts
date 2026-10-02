@@ -33,8 +33,8 @@ function toChannelDto(channel: any) {
 }
 
 app.get('/api/health', async (_req, res) => {
-  try { await prisma.$queryRaw`SELECT 1`; res.json({ status: 'ok', database: 'connected' }); }
-  catch { res.status(503).json({ status: 'degraded', database: 'unavailable' }); }
+  try { await prisma.$queryRaw`SELECT 1`; res.json({ status: 'ok', database: 'connected', notifications: metadataListenerStatus }); }
+  catch { res.status(503).json({ status: 'degraded', database: 'unavailable', notifications: metadataListenerStatus }); }
 });
 
 app.get('/api/channels', async (req, res) => {
@@ -116,6 +116,63 @@ const timers = new Map<string, ReturnType<typeof setTimeout> | null>();
 const frames = new Map<string, { body: string; created: number }>();
 const fingerprints = new Map<string, string>();
 let metadataListener: Client | null = null;
+let metadataListenerEnabled = false;
+let metadataListenerRetry: ReturnType<typeof setTimeout> | null = null;
+let metadataListenerStatus: 'listening' | 'reconnecting' | 'off' = 'off';
+let metadataListenerRetryAttempt = 0;
+let metadataListenerOutageLogged = false;
+
+function scheduleMetadataListenerReconnect() {
+  if (!metadataListenerEnabled || metadataListenerRetry) return;
+  metadataListenerStatus = 'reconnecting';
+  const baseDelayMs = Math.min(30_000, 500 * 2 ** metadataListenerRetryAttempt++);
+  const delayMs = Math.round(baseDelayMs * (0.75 + Math.random() * 0.5));
+  metadataListenerRetry = setTimeout(() => {
+    metadataListenerRetry = null;
+    void connectMetadataListener();
+  }, delayMs);
+  metadataListenerRetry.unref?.();
+}
+
+async function connectMetadataListener() {
+  if (!metadataListenerEnabled || metadataListener) return;
+  metadataListenerStatus = 'reconnecting';
+  const client = new Client({ connectionString: process.env.DATABASE_URL ?? 'postgresql://radio:radio@localhost:5432/ajn_radio?schema=public' });
+  metadataListener = client;
+  const onFailure = (error?: Error) => {
+    if (metadataListener !== client) return;
+    metadataListener = null;
+    if (error && !metadataListenerOutageLogged) {
+      console.warn('Cross-instance live metadata notifications are unavailable; reconnecting.', error.message);
+      metadataListenerOutageLogged = true;
+    }
+    void client.end().catch(() => undefined);
+    scheduleMetadataListenerReconnect();
+  };
+  client.on('error', onFailure);
+  client.on('end', () => onFailure());
+  try {
+    await client.connect();
+    if (!metadataListenerEnabled || metadataListener !== client) {
+      await client.end().catch(() => undefined);
+      return;
+    }
+    await client.query('LISTEN radio_metadata');
+    if (!metadataListenerEnabled || metadataListener !== client) {
+      await client.end().catch(() => undefined);
+      return;
+    }
+    client.on('notification', notification => {
+      if (notification.channel === 'radio_metadata' && notification.payload) void broadcast(notification.payload);
+    });
+    metadataListenerStatus = 'listening';
+    metadataListenerRetryAttempt = 0;
+    if (metadataListenerOutageLogged) console.info('Cross-instance live metadata notifications reconnected.');
+    metadataListenerOutageLogged = false;
+  } catch (error) {
+    onFailure(error as Error);
+  }
+}
 
 async function broadcast(slug: string) {
   const channelClients = subscribers.get(slug);
@@ -138,26 +195,24 @@ async function broadcast(slug: string) {
 }
 
 export async function startMetadataNotifications() {
-  if (metadataListener) return;
-  const client = new Client({ connectionString: process.env.DATABASE_URL ?? 'postgresql://radio:radio@localhost:5432/ajn_radio?schema=public' });
-  try {
-    await client.connect();
-    await client.query('LISTEN radio_metadata');
-    client.on('notification', notification => {
-      if (notification.channel === 'radio_metadata' && notification.payload) void broadcast(notification.payload);
-    });
-    metadataListener = client;
-  } catch (error) {
-    await client.end().catch(() => undefined);
-    console.warn('Cross-instance live metadata notifications are unavailable.', error);
-  }
+  if (metadataListenerEnabled) return;
+  metadataListenerEnabled = true;
+  await connectMetadataListener();
 }
 
 export async function stopMetadataNotifications() {
+  metadataListenerEnabled = false;
+  metadataListenerStatus = 'off';
+  metadataListenerRetryAttempt = 0;
+  metadataListenerOutageLogged = false;
+  if (metadataListenerRetry) clearTimeout(metadataListenerRetry);
+  metadataListenerRetry = null;
   const client = metadataListener;
   metadataListener = null;
-  if (client) await client.end();
+  if (client) await client.end().catch(() => undefined);
 }
+
+export function getMetadataNotificationStatus() { return metadataListenerStatus; }
 
 async function scheduleNextUpdate(slug: string) {
   if (timers.has(slug) || !subscribers.get(slug)?.size) return;
