@@ -66,7 +66,9 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
     const demoAfterHours = await prisma.channel.findUnique({ where: { slug: 'after-hours' }, include: { segments: true } });
     const demoPodcasts = await prisma.channel.findUnique({ where: { slug: 'ajn-podcasts' }, include: { episodes: true } });
     assert.equal(demoAfterHours?.segments.length, 4);
+    assert.ok(demoAfterHours?.segments.every(segment => /^Demo Track \d+$/.test(segment.title) && segment.artist === null));
     assert.equal(demoPodcasts?.episodes.length, 2);
+    assert.ok(demoPodcasts?.episodes.every(episode => /^Demo Episode \d+$/.test(episode.title) && episode.durationSeconds === null && episode.publishedAt === null));
     assert.equal(await prisma.channel.count({ where: { type: 'LIVE', streamUrl: { not: null } } }), 3);
 
     const { app, startMetadataNotifications, stopMetadataNotifications, getMetadataNotificationStatus, metadataListenerTestHooks, getSseConnectionCount, ingestTokenMatches } = await import('../server/index.ts');
@@ -168,7 +170,7 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
           lateReader.read(),
           new Promise<never>((_, reject) => { const timeout = setTimeout(() => reject(new Error('Late SSE joiner received no initial frame')), 2000); timeout.unref(); }),
         ]);
-        assert.match(new TextDecoder().decode(lateFrame.value), /On the Regular/);
+        assert.match(new TextDecoder().decode(lateFrame.value), /"type":"live"/);
       } finally {
         delete process.env.RADIO_FRAME_CACHE_MS;
         lateAbort.abort();
