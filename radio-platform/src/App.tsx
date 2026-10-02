@@ -119,7 +119,7 @@ export default function App() {
     const engine = engineRef.current;
     if (!engine) return;
     const segment = nowPlaying?.segment ?? localTimeline?.segment ?? channel?.segments[nowPlaying?.segmentIndex ?? 0];
-    const offsetSeconds = currentOffsetSeconds(nowPlaying?.offsetSeconds ?? localTimeline?.offsetSeconds, nowPlaying?.receivedAt, Date.now());
+    const offsetSeconds = currentOffsetSeconds(nowPlaying?.offsetSeconds ?? localTimeline?.offsetSeconds, nowPlaying?.receivedAt, performance.now());
     const action = decidePlayback({ channel, playing, episode, segment, offsetSeconds });
     if (action.kind !== 'simulated' && lastActionKey.current === action.key) return; // metadata updates must not reload live/episode audio
     lastActionKey.current = action.key;
@@ -135,7 +135,7 @@ export default function App() {
     let alive = true;
     const apply = (metadata: NowPlaying) => {
       if (!alive) return;
-      setNowPlaying({ ...metadata, receivedAt: Date.now() });
+      setNowPlaying({ ...metadata, receivedAt: performance.now() });
     };
     const refresh = () => fetch(`/api/channels/${encodeURIComponent(channel.slug)}/now-playing`).then(response => { if (!response.ok) throw new Error('Now playing unavailable'); return response.json(); }).then(apply).catch(() => {
       if (channel.type !== 'simulated' || !channel.cycleStart) return;
@@ -171,7 +171,7 @@ export default function App() {
       const response = await fetch(`/api/channels/${encodeURIComponent(channel.slug)}/now-playing`);
       if (!response.ok) return;
       const metadata = await response.json();
-      setNowPlaying({ ...metadata, receivedAt: Date.now() });
+      setNowPlaying({ ...metadata, receivedAt: performance.now() });
       if (metadata.segment) {
         const offset = metadata.offsetSeconds ?? 0;
         if (promote) void engineRef.current?.promoteWarm(metadata.segment, offset, () => { void fetchCurrentPosition(true); }, () => setPlaying(false));

@@ -9,7 +9,7 @@ export type Channel = {
   cycleStart?: string | null; currentTitle?: string | null; currentArtist?: string | null; currentAlbum?: string | null;
   segments: Segment[]; episodes: Episode[];
 };
-export type NowPlaying = { type?: ChannelType; title?: string | null; artist?: string | null; album?: string | null; segment?: Segment; segmentIndex?: number; offsetSeconds?: number; cycleOffsetSeconds?: number; totalDurationSeconds?: number; serverTime?: string; metadataUpdatedAt?: string | null; /** client-clock ms when this payload arrived; used for skew-free offsets */ receivedAt?: number };
+export type NowPlaying = { type?: ChannelType; title?: string | null; artist?: string | null; album?: string | null; segment?: Segment; segmentIndex?: number; offsetSeconds?: number; cycleOffsetSeconds?: number; totalDurationSeconds?: number; serverTime?: string; metadataUpdatedAt?: string | null; /** performance.now() timestamp when this payload arrived */ receivedAt?: number };
 
 type PlayerState = {
   channels: Channel[];

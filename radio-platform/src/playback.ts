@@ -33,8 +33,8 @@ export function decidePlayback<S extends PlaybackSegment>(input: PlaybackInput<S
 }
 
 /**
- * Server offset advanced by time elapsed on the CLIENT clock since the payload arrived.
- * Never subtracts the server timestamp from Date.now(), so client clock skew has no effect.
+ * Server offset advanced by monotonic time elapsed since the payload arrived.
+ * This avoids comparing the server wall clock with the device wall clock.
  */
 export function currentOffsetSeconds(offsetSeconds: number | undefined, receivedAtMs: number | undefined, nowMs: number) {
   const elapsed = receivedAtMs === undefined ? 0 : Math.max(0, (nowMs - receivedAtMs) / 1000);
