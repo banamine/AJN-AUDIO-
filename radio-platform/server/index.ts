@@ -5,7 +5,6 @@ import { Client } from 'pg';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { createServer as createViteServer } from 'vite';
 import { prisma } from './db.ts';
 import { resolveTimelinePosition } from '../shared/timeline.ts';
 
@@ -404,6 +403,7 @@ async function start() {
     app.use(express.static(path.resolve('dist')));
     app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')));
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   }

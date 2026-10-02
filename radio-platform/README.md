@@ -7,11 +7,13 @@ An independent radio app built alongside the AmplitudeJS library. It uses one `C
 1. Install Node.js 22.6 or newer and PostgreSQL 15 or newer.
 2. Copy `.env.example` to `.env` and set `DATABASE_URL`. Set `RADIO_INGEST_TOKEN` if a live metadata source will call the ingest endpoint.
 3. Create the database and install dependencies with `npm install`.
-4. Generate Prisma Client and apply the checked-in schema: `npm run db:generate`, then `npm run db:migrate -- --name radio_channels`.
+4. `npm install` generates Prisma Client through `postinstall`. For a new local database, apply the development migration with `npm run db:migrate -- --name radio_channels`.
 5. Load the demonstration channels: `npm run db:seed`.
 6. Start the app with `npm run dev`; the React app and API are served at `http://localhost:3000`.
 
-Run `npm test` for timeline/audio-engine checks and a PostgreSQL-wire integration test. The database test uses an ephemeral PGlite instance to apply the SQL migration, exercise Prisma relations and seed idempotency, and call the HTTP and SSE APIs. Production continues to use PostgreSQL through `DATABASE_URL`.
+Run `npm run typecheck`, `npm test`, and `npm run build` before shipping. The PostgreSQL-wire integration test uses an ephemeral PGlite instance to apply the SQL migration, exercise Prisma relations and seed idempotency, and call the HTTP and SSE APIs. Production uses PostgreSQL through `DATABASE_URL`.
+
+For production deployment, install dependencies, build the client, set `DATABASE_URL` and any ingest token, then apply committed migrations with `npx prisma migrate deploy`. Start the production server with `npm start`; it sets `NODE_ENV=production` and serves the built `dist/` files. `tsx` remains a development dependency for watch mode and the demo seed command; production runs TypeScript using Node's type stripping (Node 22.6 or newer).
 
 The client falls back to a small demonstration catalog while the API is unavailable. PostgreSQL is required for persisted channels, metadata ingestion, and server-sent events.
 
@@ -21,7 +23,7 @@ The client falls back to a small demonstration catalog while the API is unavaila
 - `shared/timeline.ts` resolves `(now - cycleStart) % totalDuration` to the active segment and its in-file offset. The API is authoritative; the client uses the same resolver while the API is offline.
 - `src/audioEngine.ts` keeps stream, segment, and episode loading outside the UI and warms the following segment in a second audio element.
 - `src/playerStore.ts` keeps catalog, station selection, playback state, and now-playing metadata in a shared Zustand store.
-- `GET /api/channels/:slug/events` sends now-playing updates to listeners. The server shares one polling loop per channel in each server process.
+- `GET /api/channels/:slug/events` sends now-playing updates to listeners. The server schedules one per-channel timer for the next simulated segment boundary in each server process.
 - `POST /api/ingest/channels/:slug/now-playing` accepts live metadata with `Authorization: Bearer $RADIO_INGEST_TOKEN` and sends an immediate SSE update.
 - The browser Media Session API provides lock-screen metadata and play, pause, previous, and next actions.
 

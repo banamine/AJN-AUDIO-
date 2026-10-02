@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "vite build",
-    "start": "tsx server/index.ts",
+    "start": "node --experimental-strip-types -e \"process.env.NODE_ENV='production'; import('./server/index.ts')\"",
+    "postinstall": "prisma generate",
+    "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
@@ -24,6 +26,7 @@
     "lucide-react": "^0.468.0",
     "motion": "^12.0.0",
     "pg": "^8.13.1",
+    "prisma": "^7.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.1.14",
@@ -40,7 +43,6 @@
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "prisma": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "~5.7.2",
     "vite": "^6.0.7"
