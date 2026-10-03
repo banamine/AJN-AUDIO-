@@ -7,11 +7,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { prisma } from './db.ts';
+import { noindexMiddleware, previewAccessGate, robotsTxtHandler } from './preview.ts';
 import { resolveTimelinePosition } from '../shared/timeline.ts';
 import type { Channel as PrismaChannel, PodcastEpisode, RadioSegment } from '../src/generated/prisma/client.ts';
 
+/** Production unless explicitly started in development (`npm run dev` passes --dev). */
+export const isDevelopment = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+
 export const app = express();
 const port = Number(process.env.PORT ?? 3000);
+app.disable('x-powered-by');
+app.use(noindexMiddleware());
+app.use(previewAccessGate());
+app.get('/robots.txt', robotsTxtHandler());
 app.use(cors());
 app.use(express.json({ limit: '32kb' }));
 
@@ -413,7 +421,7 @@ app.post('/api/ingest/channels/:slug/now-playing', async (req, res) => {
 });
 
 async function start() {
-  if (process.env.NODE_ENV === 'production') {
+  if (!isDevelopment) {
     app.use(express.static(path.resolve('dist')));
     app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')));
   } else {
@@ -422,7 +430,33 @@ async function start() {
     app.use(vite.middlewares);
   }
   await startMetadataNotifications();
-  app.listen(port, '0.0.0.0', () => console.info(`AJN Radio ready on http://localhost:${port}`));
+  const server = app.listen(port, '0.0.0.0', () => console.info(`AJN Radio ready on http://localhost:${port}`));
+  installGracefulShutdown(server);
+}
+
+/** Closes SSE streams and database connections on SIGTERM/SIGINT (Cloud Run gives ~10s). */
+export async function shutdownGracefully(server: { close: (callback: (error?: Error) => void) => void; closeAllConnections?: () => void }) {
+  const closed = new Promise<void>(resolve => server.close(() => resolve()));
+  for (const clients of subscribers.values()) clients.forEach(client => { if (!client.writableEnded) client.end(); });
+  for (const timer of timers.values()) if (timer) clearTimeout(timer);
+  await stopMetadataNotifications().catch(() => undefined);
+  server.closeAllConnections?.();
+  await closed;
+  await prisma.$disconnect().catch(() => undefined);
+}
+
+function installGracefulShutdown(server: Parameters<typeof shutdownGracefully>[0]) {
+  let stopping = false;
+  const handler = (signal: string) => {
+    if (stopping) return;
+    stopping = true;
+    console.info(`${signal} received; shutting down`);
+    const force = setTimeout(() => process.exit(1), 8000);
+    force.unref();
+    void shutdownGracefully(server).then(() => process.exit(0), () => process.exit(1));
+  };
+  process.once('SIGTERM', () => handler('SIGTERM'));
+  process.once('SIGINT', () => handler('SIGINT'));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

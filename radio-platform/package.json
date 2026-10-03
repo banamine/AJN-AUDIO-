@@ -6,9 +6,9 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "dev": "tsx watch server/index.ts",
+    "dev": "tsx watch server/index.ts --dev",
     "build": "vite build",
-    "start": "node --experimental-strip-types -e \"process.env.NODE_ENV='production'; import('./server/index.ts')\"",
+    "start": "node --experimental-strip-types server/index.ts",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
