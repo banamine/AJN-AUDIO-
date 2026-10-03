@@ -46,6 +46,14 @@ function toChannelDto(channel: ChannelWithOptionalContent) {
   };
 }
 
+function toEpisodeDto(episode: PodcastEpisode) {
+  return {
+    id: episode.id, title: episode.cleanTitle ?? episode.title, rawTitle: episode.rawTitle, description: episode.description, audioUrl: episode.audioUrl,
+    durationSeconds: episode.durationSeconds, publishedAt: episode.publishedAt, airDate: episode.airDate ? episode.airDate.toISOString().slice(0, 10) : null,
+    showSlug: episode.showSlug, showType: episode.showType, hourNumber: episode.hourNumber, variant: episode.variant, needsReview: episode.needsReview,
+  };
+}
+
 export function ingestTokenMatches(expectedToken: string, authorization: string) {
   const expected = Buffer.from(`Bearer ${expectedToken}`, 'utf8');
   const received = Buffer.from(authorization, 'utf8');
@@ -88,23 +96,55 @@ app.get('/api/channels/:slug/content', async (req, res) => {
   } catch (error) { logApiFailure('Channel content query failed', error); res.status(503).json({ error: 'Channel content is unavailable' }); }
 });
 
+const episodeOrder = [{ airDate: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { hourNumber: 'desc' }, { id: 'asc' }] as const;
+const episodeFilterSchema = z.object({ show: z.string().max(64).regex(/^[a-z0-9-]+$/).optional(), type: z.enum(['full_show', 'hour', 'segment', 'special', 'live']).optional() });
+
 app.get('/api/channels/:slug/episodes', async (req, res) => {
   try {
     const limitParam = Number(req.query.limit ?? 24);
     const limit = Number.isInteger(limitParam) ? Math.min(100, Math.max(1, limitParam)) : 24;
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const filters = episodeFilterSchema.safeParse({ show: req.query.show, type: req.query.type });
+    if (!filters.success) return res.status(400).json({ error: 'Invalid show or type filter' });
     const channel = await prisma.channel.findFirst({ where: { slug: req.params.slug, active: true, type: 'ON_DEMAND' }, select: { id: true } });
     if (!channel) return res.status(404).json({ error: 'Podcast channel not found' });
     const episodes = await prisma.podcastEpisode.findMany({
-      where: { channelId: channel.id }, take: limit + 1,
+      where: { channelId: channel.id, ...(filters.data.show ? { showSlug: filters.data.show } : {}), ...(filters.data.type ? { showType: filters.data.type } : {}) },
+      take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      orderBy: [{ publishedAt: 'desc' }, { id: 'asc' }],
+      orderBy: [...episodeOrder],
     });
     const hasMore = episodes.length > limit;
-    const page = hasMore ? episodes.slice(0, limit) : episodes;
+    const page = (hasMore ? episodes.slice(0, limit) : episodes).map(toEpisodeDto);
     res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     res.json({ episodes: page, nextCursor: hasMore ? page[page.length - 1].id : null });
   } catch (error) { logApiFailure('Podcast episode query failed', error); res.status(503).json({ error: 'Podcast episodes are unavailable' }); }
+});
+
+app.get('/api/channels/:slug/episodes/facets', async (req, res) => {
+  try {
+    const channel = await prisma.channel.findFirst({ where: { slug: req.params.slug, active: true, type: 'ON_DEMAND' }, select: { id: true } });
+    if (!channel) return res.status(404).json({ error: 'Podcast channel not found' });
+    const groups = await prisma.podcastEpisode.groupBy({ by: ['showSlug', 'showType'], where: { channelId: channel.id }, _count: { _all: true } });
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+    res.json({ facets: groups.map(group => ({ show: group.showSlug, type: group.showType, count: group._count._all })) });
+  } catch (error) { logApiFailure('Episode facets query failed', error); res.status(503).json({ error: 'Episode facets are unavailable' }); }
+});
+
+app.get('/api/sources', async (_req, res) => {
+  try {
+    const [sources, counts] = await Promise.all([
+      prisma.contentSource.findMany({ orderBy: { slug: 'asc' } }),
+      prisma.podcastEpisode.groupBy({ by: ['source'], where: { source: { not: null } }, _count: { _all: true } }),
+    ]);
+    const review = await prisma.podcastEpisode.groupBy({ by: ['source'], where: { source: { not: null }, needsReview: true }, _count: { _all: true } });
+    const countOf = (rows: typeof counts, slug: string) => rows.find(row => row.source === slug)?._count._all ?? 0;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ sources: sources.map(source => ({
+      slug: source.slug, name: source.name, feedUrl: source.feedUrl, enabled: source.enabled, lastSyncAt: source.lastSyncAt, lastStatus: source.lastStatus,
+      lastError: source.lastError, episodes: countOf(counts, source.slug), needsReview: countOf(review, source.slug),
+    })) });
+  } catch (error) { logApiFailure('Sources query failed', error); res.status(503).json({ error: 'Source status is unavailable' }); }
 });
 
 class ChannelNotFoundError extends Error {}

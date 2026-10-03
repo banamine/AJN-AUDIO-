@@ -61,7 +61,42 @@ model PodcastEpisode {
   audioUrl        String   @map("audio_url")
   publishedAt     DateTime? @map("published_at") @db.Timestamptz(6)
   durationSeconds Int?     @map("duration_seconds")
+  // Imported-content metadata (all nullable: demo/hand-made episodes leave them empty)
+  source          String?  @db.VarChar(64)
+  guid            String?  @db.VarChar(255)
+  showSlug        String?  @map("show_slug") @db.VarChar(64)
+  showType        String?  @map("show_type") @db.VarChar(24)
+  airDate         DateTime? @map("air_date") @db.Date
+  airDateSource   String?  @map("air_date_source") @db.VarChar(24)
+  rawTitle        String?  @map("raw_title") @db.VarChar(512)
+  cleanTitle      String?  @map("clean_title") @db.VarChar(255)
+  hourNumber      Int?     @map("hour_number")
+  segmentNumber   Int?     @map("segment_number")
+  variant         String?  @db.VarChar(32)
+  needsReview     Boolean  @default(false) @map("needs_review")
+  reviewReasons   String?  @map("review_reasons")
+  missingSince    DateTime? @map("missing_since") @db.Timestamptz(6)
 
+  @@unique([source, guid])
   @@index([channelId, publishedAt(sort: Desc)])
+  @@index([channelId, showSlug, showType, airDate(sort: Desc)])
   @@map("podcast_episodes")
+}
+
+/// One row per external feed we sync. Status fields are written by the importer, never guessed.
+model ContentSource {
+  id            String    @id @default(cuid())
+  slug          String    @unique @db.VarChar(64)
+  name          String    @db.VarChar(255)
+  feedUrl       String    @map("feed_url")
+  enabled       Boolean   @default(true)
+  etag          String?   @db.VarChar(255)
+  lastModified  String?   @map("last_modified") @db.VarChar(64)
+  lastSyncAt    DateTime? @map("last_sync_at") @db.Timestamptz(6)
+  lastStatus    String?   @map("last_status") @db.VarChar(24)
+  lastError     String?   @map("last_error")
+  lastItemCount Int?      @map("last_item_count")
+  lastNewCount  Int?      @map("last_new_count")
+
+  @@map("content_sources")
 }

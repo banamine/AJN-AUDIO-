@@ -24,6 +24,21 @@ const demoChannels: Channel[] = [
   ] },
 ];
 
+export type EpisodeFilter = { show?: string; type?: string };
+export type EpisodeFacet = { show: string | null; type: string | null; count: number };
+const SHOW_LABELS: Record<string, string> = { 'alex-jones': 'Alex Jones', 'war-room': 'War Room', 'sunday-night-live': 'Sunday Night Live' };
+const TYPE_LABELS: Record<string, string> = { full_show: 'Full shows', hour: 'Hours', special: 'Specials', segment: 'Segments', live: 'Live' };
+const TYPE_BADGES: Record<string, string> = { full_show: 'FULL SHOW', hour: 'HOUR', special: 'SPECIAL', segment: 'SEGMENT', live: 'LIVE' };
+
+function episodesUrl(slug: string, filter: EpisodeFilter, cursor?: string | null) {
+  const url = new URL(`/api/channels/${encodeURIComponent(slug)}/episodes`, window.location.origin);
+  url.searchParams.set('limit', '24');
+  if (filter.show) url.searchParams.set('show', filter.show);
+  if (filter.type) url.searchParams.set('type', filter.type);
+  if (cursor) url.searchParams.set('cursor', cursor);
+  return url;
+}
+
 function formatTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
   const hours = Math.floor(seconds / 3600);
@@ -60,6 +75,8 @@ export default function App() {
   const [favorite, setFavorite] = useState(false);
   const [episodePages, setEpisodePages] = useState<Record<string, string | null>>({});
   const [loadingEpisodes, setLoadingEpisodes] = useState<string | null>(null);
+  const [episodeFilters, setEpisodeFilters] = useState<Record<string, EpisodeFilter>>({});
+  const [episodeFacets, setEpisodeFacets] = useState<Record<string, EpisodeFacet[]>>({});
   const filteredChannels = useMemo(() => channels.filter(item => `${item.name} ${item.genre} ${item.city}`.toLowerCase().includes(search.toLowerCase())), [channels, search]);
   const channelIndex = channels.findIndex(item => item.id === channel?.id);
   const localTimeline = channel?.type === 'simulated' && channel.cycleStart ? resolveTimelinePosition(channel.segments, channel.cycleStart) : null;
@@ -202,9 +219,7 @@ export default function App() {
     if (!cursor || loadingEpisodes) return;
     setLoadingEpisodes(podcast.slug);
     try {
-      const url = new URL(`/api/channels/${encodeURIComponent(podcast.slug)}/episodes`, window.location.origin);
-      url.searchParams.set('limit', '24'); url.searchParams.set('cursor', cursor);
-      const response = await fetch(url);
+      const response = await fetch(episodesUrl(podcast.slug, episodeFilters[podcast.slug] ?? {}, cursor));
       if (!response.ok) throw new Error('Could not load more episodes');
       const data = await response.json();
       mergeChannel(podcast.slug, { episodes: [...podcast.episodes, ...(data.episodes ?? [])] });
@@ -212,7 +227,29 @@ export default function App() {
     } catch (error) { console.warn(error); }
     finally { setLoadingEpisodes(null); }
   };
+  const applyEpisodeFilter = async (podcast: Channel, next: EpisodeFilter) => {
+    setEpisodeFilters(value => ({ ...value, [podcast.slug]: next }));
+    setLoadingEpisodes(podcast.slug);
+    try {
+      const response = await fetch(episodesUrl(podcast.slug, next));
+      if (!response.ok) throw new Error('Could not filter episodes');
+      const data = await response.json();
+      mergeChannel(podcast.slug, { episodes: data.episodes ?? [] });
+      setEpisodePages(value => ({ ...value, [podcast.slug]: data.nextCursor ?? null }));
+    } catch (error) { console.warn(error); }
+    finally { setLoadingEpisodes(null); }
+  };
   const podcasts = channels.filter(item => item.type === 'on_demand');
+  const podcastSlugs = podcasts.map(item => item.slug).join(',');
+  useEffect(() => {
+    let alive = true;
+    for (const slug of podcastSlugs.split(',').filter(Boolean)) {
+      fetch(`/api/channels/${encodeURIComponent(slug)}/episodes/facets`).then(response => response.ok ? response.json() : null).then(data => {
+        if (alive && data?.facets) setEpisodeFacets(value => ({ ...value, [slug]: data.facets }));
+      }).catch(() => undefined);
+    }
+    return () => { alive = false; };
+  }, [podcastSlugs]);
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : activeSegment?.durationSeconds ? Math.min(100, ((position || nowPlaying?.offsetSeconds || 0) / activeSegment.durationSeconds) * 100) : 0;
 
   return <div className="radio-shell" style={{ '--station': stationColor, '--station-glow': `${stationColor}40` } as CSSProperties}>
@@ -226,7 +263,7 @@ export default function App() {
 
     <section className="station-section" id="stations"><div className="section-heading"><div><div className="section-label">THE SELECTED FREQUENCIES</div><h2>Find your <em>station.</em></h2></div><div className="station-heading-right"><span className="station-count">{String(channels.length).padStart(2, '0')} CHANNELS</span>{searchOpen && <label className="search-field"><Search size={14}/><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a frequency"/><button aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(''); }}><X size={14}/></button></label>}<button className="all-stations" onClick={() => setSearchOpen(value => !value)}>SEARCH CHANNELS <ArrowUpRight size={13}/></button></div></div><div className="station-grid">{filteredChannels.filter(item => item.type !== 'on_demand').map((item, index) => { const color = palette[index % palette.length]; return <button key={item.id} className={`station-card backdrop-blur-md bg-black/20 border border-white/10 ${channel?.id === item.id ? 'selected' : ''}`} style={{ '--card-accent': color } as CSSProperties} onClick={() => tune(item)}><span className="station-number">0{index + 1}</span><span className="station-status">{item.type === 'live' ? <><i/>LIVE</> : <><Waves size={12}/>24/7</>}</span><div className="station-card-art"><div className="card-art-shape shape-a"/><div className="card-art-shape shape-b"/><AudioLines size={16}/></div><span className="station-card-title">{item.name}</span><span className="station-card-genre">{item.genre}</span><span className="station-card-bottom"><span>{item.city}</span><span className="station-frequency">{item.frequency} <small>FM</small></span></span></button>; })}</div></section>
 
-    <PodcastShelf podcasts={podcasts} activeSlug={channel?.slug} onSelect={tune} onPlay={playEpisode} cursors={episodePages} loading={loadingEpisodes} onLoadMore={loadMoreEpisodes} />
+    <PodcastShelf podcasts={podcasts} activeSlug={channel?.slug} onSelect={tune} onPlay={playEpisode} cursors={episodePages} loading={loadingEpisodes} onLoadMore={loadMoreEpisodes} facets={episodeFacets} filters={episodeFilters} onFilter={applyEpisodeFilter} />
 
     <section className="quote-banner" id="about"><div className="quote-mark">“</div><p>Radio should feel like <em>someone left the light on</em> for you.</p><span>— THE AJN RADIO PROMISE</span><div className="quote-signal"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></section>
     </main><footer className="footer"><a className="brand" href="#top"><span className="brand-icon"><AudioLines size={15}/></span><span>ajn<span className="brand-light">radio</span></span><span className="brand-dot">.</span></a><span>INDEPENDENT RADIO · BROADCAST FROM EVERYWHERE</span><span className="footer-right">MADE FOR THE MOMENTS IN BETWEEN <span>© 2026</span></span></footer>
@@ -242,13 +279,35 @@ type PodcastShelfProps = {
   cursors: Record<string, string | null>;
   loading: string | null;
   onLoadMore: (channel: Channel) => void;
+  facets: Record<string, EpisodeFacet[]>;
+  filters: Record<string, EpisodeFilter>;
+  onFilter: (channel: Channel, filter: EpisodeFilter) => void;
 };
 
-function PodcastShelf({ podcasts, activeSlug, onSelect, onPlay, cursors, loading, onLoadMore }: PodcastShelfProps) {
+function PodcastShelf({ podcasts, activeSlug, onSelect, onPlay, cursors, loading, onLoadMore, facets, filters, onFilter }: PodcastShelfProps) {
+  // Show one podcast channel at a time: the tuned one, otherwise the first.
+  const visible = podcasts.find(podcast => podcast.slug === activeSlug) ?? podcasts[0];
+  const shown = visible ? [visible] : [];
   return <section className="podcast-section" id="podcasts">
     <div className="section-heading"><div><div className="section-label">WHEN YOU’RE READY TO LISTEN</div><h2>Not live. <em>Still lovely.</em></h2></div><span className="podcast-aside">A FEW GOOD CONVERSATIONS, ON YOUR TIME.</span></div>
-    <div className="podcast-channels">{podcasts.map(podcast => <button key={podcast.id} className={`podcast-channel ${activeSlug === podcast.slug ? 'selected' : ''}`} onClick={() => onSelect(podcast)}><Headphones size={14}/><span>{podcast.name}</span><small>{podcast.genre}</small></button>)}</div>
-    <div className="episode-grid">{podcasts.flatMap(podcast => podcast.episodes.map((item, index) => <button className="episode-card" key={item.id} onClick={() => onPlay(podcast, item)}><span className="episode-cover" style={{ '--cover-accent': palette[(index + 1) % palette.length] } as CSSProperties}><span>AJN<br/>STUDIO</span><Headphones size={20}/></span><span className="episode-meta"><span className="section-label">{podcast.name.toUpperCase()} · EP {String(index + 1).padStart(2, '0')}</span><strong>{item.title}</strong><small>{item.description}</small><span className="episode-play"><Play size={12} fill="currentColor"/> LISTEN TO EPISODE <span>{item.durationSeconds ? formatTime(item.durationSeconds) : ''}</span></span></span></button>))}</div>
-    {podcasts.map(podcast => cursors[podcast.slug] && <button key={`more-${podcast.id}`} className="load-more" disabled={loading === podcast.slug} onClick={() => onLoadMore(podcast)}>{loading === podcast.slug ? 'LOADING…' : `MORE FROM ${podcast.name.toUpperCase()}`} <ArrowDownRight size={14}/></button>)}
+    <div className="podcast-channels">{podcasts.map(podcast => <button key={podcast.id} className={`podcast-channel ${visible?.slug === podcast.slug ? 'selected' : ''}`} onClick={() => onSelect(podcast)}><Headphones size={14}/><span>{podcast.name}</span><small>{podcast.genre}</small></button>)}</div>
+    {shown.map(podcast => {
+      const list = facets[podcast.slug] ?? [];
+      const shows = [...new Set(list.map(facet => facet.show).filter((value): value is string => Boolean(value)))];
+      const types = [...new Set(list.map(facet => facet.type).filter((value): value is string => Boolean(value)))];
+      if (shows.length < 2 && types.length < 2) return null;
+      const filter = filters[podcast.slug] ?? {};
+      const chip = (label: string, selected: boolean, onClick: () => void) => <button key={label} type="button" aria-pressed={selected} className={`filter-chip ${selected ? 'selected' : ''}`} onClick={onClick}>{label}</button>;
+      return <div className="episode-filters" key={`filters-${podcast.id}`} aria-label={`Filter ${podcast.name}`}>
+        <span className="section-label">{podcast.name.toUpperCase()}</span>
+        {chip('All shows', !filter.show, () => onFilter(podcast, { ...filter, show: undefined }))}
+        {shows.map(show => chip(SHOW_LABELS[show] ?? show, filter.show === show, () => onFilter(podcast, { ...filter, show })))}
+        <span className="filter-gap"/>
+        {chip('All types', !filter.type, () => onFilter(podcast, { ...filter, type: undefined }))}
+        {types.map(type => chip(TYPE_LABELS[type] ?? type, filter.type === type, () => onFilter(podcast, { ...filter, type })))}
+      </div>;
+    })}
+    <div className="episode-grid">{shown.flatMap(podcast => podcast.episodes.map((item, index) => <button className="episode-card" key={item.id} onClick={() => onPlay(podcast, item)}><span className="episode-cover" style={{ '--cover-accent': palette[(index + 1) % palette.length] } as CSSProperties}><span>AJN<br/>STUDIO</span><Headphones size={20}/></span><span className="episode-meta"><span className="section-label">{podcast.name.toUpperCase()}{item.showType ? ` · ${TYPE_BADGES[item.showType] ?? item.showType.toUpperCase()}` : ''}</span><strong>{item.title}</strong>{item.airDate ? <small>Aired {item.airDate}</small> : item.description ? <small>{item.description}</small> : null}{item.needsReview ? <small>Date needs review</small> : null}<span className="episode-play"><Play size={12} fill="currentColor"/> LISTEN TO EPISODE <span>{item.durationSeconds ? formatTime(item.durationSeconds) : ''}</span></span></span></button>))}</div>
+    {shown.map(podcast => cursors[podcast.slug] && <button key={`more-${podcast.id}`} className="load-more" disabled={loading === podcast.slug} onClick={() => onLoadMore(podcast)}>{loading === podcast.slug ? 'LOADING…' : `MORE FROM ${podcast.name.toUpperCase()}`} <ArrowDownRight size={14}/></button>)}
   </section>;
 }

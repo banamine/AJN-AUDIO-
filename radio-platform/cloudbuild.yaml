@@ -43,7 +43,7 @@ steps:
       - --no-cpu-throttling       # keeps the Postgres LISTEN connection alive between requests
       - --add-cloudsql-instances=${_CLOUDSQL_INSTANCE}
       - --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,RADIO_INGEST_TOKEN=${_INGEST_TOKEN_SECRET}:latest
-      - --set-env-vars=RUN_MIGRATIONS_ON_START=true,SEED_DEMO=false,PREVIEW_ACCESS=${_PREVIEW_ACCESS}
+      - --set-env-vars=RUN_MIGRATIONS_ON_START=true,SEED_DEMO=false,SYNC_SOURCES_ON_START=true,PREVIEW_ACCESS=${_PREVIEW_ACCESS}
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/ajn-radio:$BUILD_ID

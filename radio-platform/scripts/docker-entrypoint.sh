@@ -13,4 +13,9 @@ if [ "${SEED_DEMO:-false}" = "true" ]; then
   node --experimental-strip-types prisma/seed.ts
 fi
 
+if [ "${SYNC_SOURCES_ON_START:-false}" = "true" ]; then
+  echo "[entrypoint] importing AJN feeds (non-fatal if it fails)"
+  node --experimental-strip-types scripts/sources-sync.ts || echo "[entrypoint] source sync failed; continuing"
+fi
+
 exec "$@"

@@ -28,3 +28,18 @@ The client falls back to a small demonstration catalog while the API is unavaila
 - The browser Media Session API provides lock-screen metadata and play, pause, previous, and next actions.
 
 For multiple server instances, run an SSE-capable load balancer with connection affinity and keep PostgreSQL `LISTEN/NOTIFY` available to each app instance. Live metadata ingestion publishes a channel event through PostgreSQL so every instance updates its own connected listeners; simulated schedules are calculated and emitted per subscribed channel instance.
+
+## Real content: AJN feeds
+
+`npm run sources:sync` imports the public AJN RSS feeds (`https://rss.alexjones.media/`: Alex Jones, War Room, Sunday Night Live, and the hourly audio feed) into the `podcast_episodes` table. It is idempotent: re-running it changes nothing when the feeds have not changed (conditional requests with ETag), and an item that disappears from a feed is kept and marked `missingSince`.
+
+- Titles, air dates, show and type come from the **filename** (`20261002_Fri_WarRoom-Hr3.mp3`), cross-checked against the feed title. If the weekday does not match the date, `airDate` is `null` and the item is flagged `needsReview`; nothing is guessed. The raw feed title is always kept in `rawTitle`.
+- Show types: `full_show`, `hour`, `special` (the `-Special` files). The feeds give no durations, so `durationSeconds` stays `null`.
+- Two channels are created: `ajn-radio` and `ajn-exclusive`. The feeds contain no "Exclusive" section; `-Special` files are routed to `ajn-exclusive`, and `AJN_EXCLUSIVE_VARIANTS` (comma list, default `Special`) controls it. Set it empty to put everything in `ajn-radio`.
+- Safety: https only, feed host allowlist (`rss.alexjones.media`), enclosure host allowlist (`archive.alexjoneslive.com`), timeouts, a 5 MB size cap, redirects refused, one transaction per feed.
+- Not imported: the affiliate segment directories (no usage permission confirmed) and third-party station playlists (no license declared by the source repository). See `docs/SOURCES-DISCOVERY.md`.
+- API: `GET /api/channels/:slug/episodes?show=war-room&type=hour&cursor=...`, `GET /api/channels/:slug/episodes/facets`, `GET /api/sources` (sync status).
+
+## Preview deployment
+
+See `DEPLOY.md`. Runtime switches: `PREVIEW_ACCESS` (`public` default, or `authenticated` with `PREVIEW_PASSWORD`), `ROBOTS_INDEX=allow` to lift the default `noindex`, `RUN_MIGRATIONS_ON_START`, `SEED_DEMO`, `SYNC_SOURCES_ON_START`.

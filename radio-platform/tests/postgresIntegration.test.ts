@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { Client } from 'pg';
@@ -11,7 +11,7 @@ import { resolveTimelinePosition } from '../shared/timeline.ts';
 import { seedDemoData } from '../prisma/seed.ts';
 import test from 'node:test';
 
-const migrationPath = new URL('../prisma/migrations/20261001000000_radio_channels/migration.sql', import.meta.url);
+const migrationsDir = new URL('../prisma/migrations/', import.meta.url);
 
 test('PostgreSQL migration and Prisma relations support catalog, timeline, and episodes', async () => {
   const db = await PGlite.create();
@@ -30,7 +30,10 @@ test('PostgreSQL migration and Prisma relations support catalog, timeline, and e
   try {
     await socketServer.start();
     await wireClient.connect();
-    await wireClient.query(await readFile(migrationPath, 'utf8'));
+    // Apply every committed migration in order, exactly as `prisma migrate deploy` would.
+    for (const dir of (await readdir(migrationsDir)).filter(name => /^\d+_/.test(name)).sort()) {
+      await wireClient.query(await readFile(new URL(`${dir}/migration.sql`, migrationsDir), 'utf8'));
+    }
     process.env.DATABASE_URL = connectionString;
     process.env.RADIO_INGEST_TOKEN = 'integration-token';
     prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
