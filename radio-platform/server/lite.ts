@@ -18,7 +18,11 @@ export const FEEDS = [
 export const NEWS_URL = process.env.NEWS_DIGEST_URL ?? 'https://banamine.github.io/Daily-News-Digest-/data/current/data.json';
 const ALLOWED_AUDIO_HOSTS = ['archive.alexjoneslive.com'];
 const ALLOWED_FETCH_HOSTS = ['rss.alexjones.media', new URL(NEWS_URL).hostname];
-const REFRESH_MS = Math.max(1, Number(process.env.REFRESH_MINUTES ?? 15)) * 60_000;
+export function refreshMinutes(value: string | undefined, fallback = 15): number {
+  const minutes = Number(value);
+  return value !== undefined && Number.isFinite(minutes) && minutes >= 1 && minutes <= 1440 ? minutes : fallback; // invalid input falls back instead of becoming NaN
+}
+const REFRESH_MS = refreshMinutes(process.env.REFRESH_MINUTES) * 60_000;
 const EXCLUSIVE = (process.env.AJN_EXCLUSIVE_VARIANTS ?? 'Special').split(',').map(value => value.trim()).filter(Boolean);
 const CHANNELS = {
   'ajn-radio': { name: 'AJN Radio', description: 'Completed shows and hours from the AJN feeds.' },
@@ -37,6 +41,8 @@ export const store = {
   episodes: [] as Episode[],
   byFeed: new Map<string, Episode[]>(),
   news: null as NewsDigest | null,
+  newsFetchedAt: null as string | null,
+  lastPodcastSuccess: null as string | null,
   feeds: new Map<string, FeedStatus>(FEEDS.map(feed => [feed.slug, { slug: feed.slug, name: feed.name, feedUrl: feed.url, lastSyncAt: null, lastStatus: 'pending', lastError: null, episodes: 0 }])),
   newsStatus: { lastSyncAt: null as string | null, lastStatus: 'pending' as 'ok' | 'error' | 'pending', lastError: null as string | null },
   lastRefresh: 0,
@@ -46,14 +52,26 @@ const byEpisodeOrder = (a: Episode, b: Episode) =>
   (b.airDate ?? '').localeCompare(a.airDate ?? '') || (b.publishedAt ?? '').localeCompare(a.publishedAt ?? '') || (b.hourNumber ?? -1) - (a.hourNumber ?? -1) || a.id.localeCompare(b.id);
 const message = (error: unknown) => (error instanceof Error ? (error.name === 'TimeoutError' ? 'request timed out' : error.message) : String(error));
 
-async function getText(url: string, fetchImpl: typeof fetch, maxBytes = 5_000_000): Promise<string> {
+export async function getText(url: string, fetchImpl: typeof fetch, maxBytes = 5_000_000): Promise<string> {
   const target = new URL(url);
   if (target.protocol !== 'https:' || !ALLOWED_FETCH_HOSTS.includes(target.hostname)) throw new Error('host is not allowed');
   const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'ajn-radio/1.0' } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.text();
-  if (body.length > maxBytes) throw new Error('response too large');
-  return body;
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error('response too large');
+  if (!response.body) return '';
+  // Read as a stream and stop at the cap, so an oversized body is never fully buffered.
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) { await reader.cancel().catch(() => undefined); throw new Error('response too large'); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** Re-reads every source. A failing source keeps its previous data and never affects the others. */
@@ -83,9 +101,11 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<void> {
   }));
   // A feed that failed keeps its previous episodes; only a successful read replaces them.
   for (const [slug, episodes] of next) store.byFeed.set(slug, episodes);
+  if (next.size > 0) store.lastPodcastSuccess = new Date().toISOString();
   store.episodes = [...store.byFeed.values()].flat().sort(byEpisodeOrder);
   try {
     store.news = parseNewsDigest(JSON.parse(await getText(NEWS_URL, fetchImpl)));
+    store.newsFetchedAt = new Date().toISOString();
     Object.assign(store.newsStatus, { lastSyncAt: new Date().toISOString(), lastStatus: 'ok', lastError: null });
   } catch (error) {
     Object.assign(store.newsStatus, { lastSyncAt: new Date().toISOString(), lastStatus: 'error', lastError: message(error) });
@@ -104,7 +124,16 @@ app.disable('x-powered-by');
 app.use(noindexMiddleware());
 app.get('/robots.txt', robotsTxtHandler());
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', episodes: store.episodes.length, news: store.news?.top.length ?? 0, lastRefresh: store.lastRefresh ? new Date(store.lastRefresh).toISOString() : null }));
+// Liveness: always 200 while the process runs, so an upstream outage never makes Cloud Run restart a healthy server.
+// `content` says whether what we serve is complete: ok | degraded (a source is failing, old data is served) | empty (nothing loaded yet).
+app.get('/api/health', (_req, res) => {
+  const failing = [...store.feeds.values()].filter(feed => feed.lastStatus === 'error').map(feed => feed.slug).concat(store.newsStatus.lastStatus === 'error' ? ['news'] : []);
+  const content = store.episodes.length === 0 && !store.news ? 'empty' : failing.length ? 'degraded' : 'ok';
+  res.json({
+    status: 'ok', content, failing, episodes: store.episodes.length, news: store.news?.top.length ?? 0,
+    lastRefresh: store.lastRefresh ? new Date(store.lastRefresh).toISOString() : null, lastPodcastSuccess: store.lastPodcastSuccess, lastNewsSuccess: store.newsFetchedAt,
+  });
+});
 
 app.get('/api/channels', (_req, res) => {
   refreshIfStale();
@@ -133,7 +162,9 @@ app.get('/api/channels/:slug/episodes', (req, res) => {
   const limitParam = Number(req.query.limit ?? 24);
   const limit = Number.isInteger(limitParam) ? Math.min(100, Math.max(1, limitParam)) : 24;
   const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
-  const start = cursor ? list.findIndex(episode => episode.id === cursor) + 1 : 0;
+  const cursorIndex = cursor ? list.findIndex(episode => episode.id === cursor) : -1;
+  if (cursor && cursorIndex < 0) return res.status(400).json({ error: 'Invalid or expired cursor; reload the list' });
+  const start = cursor ? cursorIndex + 1 : 0;
   const page = list.slice(start, start + limit);
   res.setHeader('Cache-Control', 'public, max-age=30');
   res.json({ episodes: page.map(publicEpisode), nextCursor: start + limit < list.length && page.length ? page[page.length - 1].id : null });
@@ -155,7 +186,7 @@ app.get('/api/news', (_req, res) => {
   refreshIfStale();
   if (!store.news) return res.status(503).json({ error: 'News is not available yet' });
   res.setHeader('Cache-Control', 'public, max-age=60');
-  res.json(store.news);
+  res.json({ ...store.news, fetchedAt: store.newsFetchedAt, stale: store.newsStatus.lastStatus === 'error' });
 });
 
 app.get('/api/sources', (_req, res) => {

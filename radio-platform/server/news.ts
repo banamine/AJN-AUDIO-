@@ -13,7 +13,7 @@ const clean = (value: unknown, max: number): string | null => {
   return text ? text.slice(0, max) : null;
 };
 const safeUrl = (value: unknown): string | null => {
-  try { const url = new URL(String(value)); return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null; } catch { return null; }
+  try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; }
 };
 function toItem(raw: Record<string, unknown>): NewsItem | null {
   const title = clean(raw.headline ?? raw.title, 300);

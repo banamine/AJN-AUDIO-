@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { decodeEntities, parseNewsDigest } from '../server/news.ts';
-import { FEEDS, NEWS_URL, app, refresh, store } from '../server/lite.ts';
+import { FEEDS, NEWS_URL, app, getText, refresh, refreshMinutes, store } from '../server/lite.ts';
 
 const feedXml = (name: string) => readFileSync(new URL(`./fixtures/feeds/${name}.sample.xml`, import.meta.url), 'utf8');
 const digest = {
@@ -54,9 +54,13 @@ test('lite server: serves episodes and news from fetched sources, isolates a fai
     assert.ok(second.episodes.length > 0 && second.episodes[0].title !== page.episodes[0].title);
     assert.equal((await fetch(`${base}/api/channels/ajn-radio/episodes?type=bogus`)).status, 400);
     assert.equal((await fetch(`${base}/api/channels/nope/episodes`)).status, 404);
+    assert.equal((await fetch(`${base}/api/channels/ajn-radio/episodes?cursor=does-not-exist`)).status, 400);
+    const healthy = await (await fetch(`${base}/api/health`)).json() as { status: string; content: string; failing: string[] };
+    assert.deepEqual([healthy.status, healthy.content, healthy.failing], ['ok', 'ok', []]);
     const facets = await (await fetch(`${base}/api/channels/ajn-radio/episodes/facets`)).json() as { facets: Array<{ count: number }> };
     assert.ok(facets.facets.length > 0);
-    const news = await (await fetch(`${base}/api/news`)).json() as { top: Array<{ title: string }> };
+    const news = await (await fetch(`${base}/api/news`)).json() as { top: Array<{ title: string }>; fetchedAt: string | null; stale: boolean };
+    assert.ok(news.fetchedAt && news.stale === false);
     assert.equal(news.top[0].title, 'M&S shoplifter caught');
     assert.equal((await fetch(`${base}/api/health`)).headers.get('x-robots-tag'), 'noindex, nofollow');
 
@@ -66,6 +70,22 @@ test('lite server: serves episodes and news from fetched sources, isolates a fai
     const sources = await (await fetch(`${base}/api/sources`)).json() as { sources: Array<{ slug: string; lastStatus: string; lastError: string | null }> };
     assert.equal(sources.sources.find(source => source.slug === 'ajn-warroom')?.lastStatus, 'error');
     assert.equal(sources.sources.find(source => source.slug === 'ajn-alex')?.lastStatus, 'ok');
+    const degraded = await (await fetch(`${base}/api/health`)).json() as { status: string; content: string; failing: string[] };
+    assert.deepEqual([degraded.status, degraded.content, degraded.failing], ['ok', 'degraded', ['ajn-warroom']]); // liveness stays ok, content says degraded
     assert.ok(FEEDS.length === 4);
   } finally { server.close(); server.closeAllConnections?.(); }
+});
+
+test('config and limits: invalid REFRESH_MINUTES falls back, https-only links, oversized bodies are cut off while streaming', async () => {
+  assert.equal(refreshMinutes(undefined), 15);
+  assert.equal(refreshMinutes('abc'), 15);
+  assert.equal(refreshMinutes('0'), 15);
+  assert.equal(refreshMinutes('99999'), 15);
+  assert.equal(refreshMinutes('5'), 5);
+  const parsed = parseNewsDigest({ stories: [{ id: 'h', headline: 'Plain http', url: 'http://example.test/h' }, { id: 's', headline: 'Secure', url: 'https://example.test/s' }] });
+  assert.deepEqual(parsed.top.map(item => item.id), ['s']);
+  const big = (async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(600)); controller.enqueue(new Uint8Array(600)); controller.close(); } }), { status: 200 })) as typeof fetch;
+  await assert.rejects(getText('https://rss.alexjones.media/x.xml', big, 1000), /too large/);
+  const small = (async () => new Response('hello', { status: 200 })) as typeof fetch;
+  assert.equal(await getText('https://rss.alexjones.media/x.xml', small, 1000), 'hello');
 });

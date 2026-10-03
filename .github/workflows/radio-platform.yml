@@ -63,15 +63,8 @@ jobs:
           done
           docker logs ajn-radio
           exit 1
-      - name: Page, API and real sources
-        run: |
-          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
-          curl -fsSI http://127.0.0.1:8080/ | grep -qi 'x-robots-tag: noindex'
-          curl -fsS http://127.0.0.1:8080/api/channels | python3 -c "import sys,json; assert len(json.load(sys.stdin)['channels'])>=2"
-          EPISODES=$(curl -fsS 'http://127.0.0.1:8080/api/channels/ajn-radio/episodes?limit=100' | python3 -c "import sys,json; print(len(json.load(sys.stdin)['episodes']))")
-          NEWS=$(curl -fsS http://127.0.0.1:8080/api/news | python3 -c "import sys,json; print(len(json.load(sys.stdin)['top']))" || echo 0)
-          echo "::notice::AJN episodes served: ${EPISODES}; top news stories: ${NEWS}"
-          curl -fsS http://127.0.0.1:8080/api/sources
+      - name: Smoke test (page, every API the page calls, real sources)
+        run: bash scripts/smoke-lite.sh http://127.0.0.1:8080
       - name: Container logs
         if: always()
         run: docker logs ajn-radio

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 
 export type NewsItem = { id: string; title: string; url: string; source: string; excerpt: string | null; publishedAt: string | null };
-export type NewsDigest = { date: string | null; updatedAt: string | null; top: NewsItem[]; bySource: Array<{ source: string; items: NewsItem[] }> };
+export type NewsDigest = { date: string | null; updatedAt: string | null; fetchedAt?: string | null; stale?: boolean; top: NewsItem[]; bySource: Array<{ source: string; items: NewsItem[] }> };
 type NewsState = { status: 'loading' | 'ready' | 'error'; digest: NewsDigest | null };
 
 /** Loads /api/news and refreshes it every 10 minutes. Failures keep the last good digest. */
@@ -20,6 +20,14 @@ export function useNews(): NewsState {
   return state;
 }
 
+/** Words for how old the digest is; empty when it is fresh enough not to need a note. */
+function staleNote(digest: NewsDigest, now = Date.now()): string {
+  const stamp = Date.parse(digest.fetchedAt ?? digest.updatedAt ?? '');
+  const hours = Number.isNaN(stamp) ? 0 : (now - stamp) / 3_600_000;
+  if (digest.stale || hours >= 12) return `Showing the last news we could load${Number.isNaN(stamp) ? '' : ` (${hours < 1 ? 'under an hour' : `${Math.round(hours)} h`} old)`}. The Daily Digest could not be refreshed.`;
+  return '';
+}
+
 function timeLabel(iso: string | null) {
   if (!iso) return '';
   const date = new Date(iso);
@@ -29,7 +37,7 @@ function timeLabel(iso: string | null) {
 export function NewsTicker({ news }: { news: NewsState }) {
   const items = news.digest?.top ?? [];
   if (!items.length) return null;
-  const row = (suffix: string) => items.map(item => <a key={`${item.id}${suffix}`} className="ticker-item" href={item.url} target="_blank" rel="noopener noreferrer"><b>{item.source}</b>{item.title}</a>);
+  const row = (suffix: string) => items.map(item => <a key={`${item.id}${suffix}`} className="ticker-item" tabIndex={suffix ? -1 : undefined} href={item.url} target="_blank" rel="noopener noreferrer"><b>{item.source}</b>{item.title}</a>);
   return <div className="news-ticker" role="region" aria-label="News headlines">
     <span className="ticker-label">NEWS</span>
     <div className="ticker-window"><div className="ticker-track">{row('')}<span aria-hidden="true" className="ticker-copy">{row('-copy')}</span></div></div>
@@ -44,11 +52,13 @@ export function NewsSection({ news }: { news: NewsState }) {
     <div className="section-heading"><div><div className="section-label">{digest?.date ? `THE DAILY BRIEFING · ${digest.date}` : 'THE DAILY BRIEFING'}</div><h2>Read the <em>news.</em></h2></div></div>
     {news.status === 'loading' && <p className="catalog-status" role="status">Loading news…</p>}
     {news.status === 'error' && <p className="catalog-status" role="status">The news could not be loaded right now.</p>}
+    {digest && staleNote(digest) && <p className="catalog-status" role="status">{staleNote(digest)}</p>}
     {digest && <>
       <div className="episode-filters" role="group" aria-label="News sources">
         <button type="button" aria-pressed={source === null} className={`filter-chip ${source === null ? 'selected' : ''}`} onClick={() => setSource(null)}>TOP STORIES</button>
         {digest.bySource.map(group => <button key={group.source} type="button" aria-pressed={source === group.source} className={`filter-chip ${source === group.source ? 'selected' : ''}`} onClick={() => setSource(group.source)}>{group.source.toUpperCase()}</button>)}
       </div>
+      {items.length === 0 && <p className="catalog-status" role="status">No stories from this source in today&apos;s digest.</p>}
       <div className="news-grid">{items.map(item => <a key={item.id} className="news-card" href={item.url} target="_blank" rel="noopener noreferrer">
         <span className="news-meta">{item.source.toUpperCase()}{item.publishedAt ? ` · ${timeLabel(item.publishedAt)}` : ''}</span>
         <span className="news-title">{item.title}<ArrowUpRight size={14} aria-hidden="true"/></span>

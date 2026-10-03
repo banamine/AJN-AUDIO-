@@ -38,3 +38,5 @@
 .news-title svg{flex:none;margin-top:3px;opacity:.6}
 .news-excerpt{font-size:13px;line-height:1.55;color:#aab7ac;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 @media(max-width:760px){.news-grid{grid-template-columns:1fr}.news-ticker{margin:0 -6%;padding:0 6%}}
+
+.podcast-channels{display:flex;flex-wrap:wrap;gap:12px}

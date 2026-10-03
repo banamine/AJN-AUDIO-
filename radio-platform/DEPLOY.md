@@ -7,10 +7,10 @@ and serves them to the web player. **No database, no secrets, no Cloud SQL.** Go
 ## Verified locally (2026-10-03)
 
 - `docker build` of this `Dockerfile`: image 336 MB, only 5 MB of dependencies, runs as non-root `node`.
-- Container started with no database and no secrets: healthy after 9 s, `GET /api/health` -> `{"status":"ok","episodes":280,"news":8}`.
+- Container started with no database and no secrets: healthy after 9 s, `GET /api/health` -> `{"status":"ok","content":"ok","episodes":280,"news":8,...}`.
 - Real sources read: Alex 90, War Room 66, Sunday Night Live 14, AJN Hourly Audio 110 episodes; Daily News Digest: 8 top stories from 11 news sources.
 - Page served with `X-Robots-Tag: noindex, nofollow`; `docker stop` exits 0.
-- Tests: 35/35. Look at the page in a browser at desktop and phone width: ticker, news cards, podcast cards, no console errors.
+- Tests: 36/36, plus `scripts/smoke-lite.sh` against the running server (every endpoint the page calls). Look at the page in a browser at desktop and phone width: ticker, news cards, podcast cards, no console errors.
 
 ## What it contacts (and nothing else)
 
@@ -63,7 +63,8 @@ gcloud builds triggers create github --name=ajn-radio \
 ## 4. Check the live URL
 
 ```bash
-curl -s https://YOUR-SERVICE.run.app/api/health     # {"status":"ok","episodes":~280,"news":8,...}
+curl -s https://YOUR-SERVICE.run.app/api/health     # status = process is alive (always ok); content = ok | degraded | empty
+bash scripts/smoke-lite.sh https://YOUR-SERVICE.run.app   # full check of every endpoint the page uses
 curl -s https://YOUR-SERVICE.run.app/api/sources    # last status of each of your 4 feeds and the news
 ```
 
@@ -76,6 +77,17 @@ curl -s https://YOUR-SERVICE.run.app/api/sources    # last status of each of you
 | `AJN_EXCLUSIVE_VARIANTS` | `Special` | which filename variants go to the "AJN Exclusive" channel |
 | `ROBOTS_INDEX` | unset | `allow` removes the `noindex` header |
 | `PORT` | `8080` | Cloud Run sets it |
+
+## 5b. Health, public access, API
+
+- `/api/health`: `status` is liveness only and stays `ok` while the process runs, so a feed outage never makes Cloud Run restart a healthy server.
+  `content` says what users see: `ok`, `degraded` (a source is failing, last good data still served; `failing` lists which) or `empty`. It also gives `lastPodcastSuccess` and `lastNewsSuccess`.
+- `/api/news` includes `fetchedAt` and `stale`; the page shows a note when the digest could not be refreshed or is 12+ hours old.
+- **Public access is deliberate:** `cloudbuild.yaml` deploys with `--allow-unauthenticated` because this is a public player. Set `_AUTH_FLAG=--no-allow-unauthenticated` to keep it private.
+  There is no app-level rate limiting; Cloud Run `--max-instances` caps cost and responses are small in-memory reads.
+- Invalid `REFRESH_MINUTES` falls back to 15. News links must be `https://`. Feed/news downloads are size-capped while streaming.
+- **API the page uses (all in `server/lite.ts`):** `/api/channels`, `/api/channels/:slug/episodes` (+`/facets`), `/api/news`, plus `/api/health` and `/api/sources`.
+  The earlier live/simulated-station routes (`now-playing`, `events`, `content`) are intentionally not part of the simple server; they exist only in the database variant (`server/index.ts`). The page does not request them for on-demand channels.
 
 ## 6. Adding more podcasts or news later
 
