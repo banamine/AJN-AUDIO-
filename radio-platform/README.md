@@ -43,3 +43,7 @@ For multiple server instances, run an SSE-capable load balancer with connection 
 ## Preview deployment
 
 See `DEPLOY.md`. Runtime switches: `PREVIEW_ACCESS` (`public` default, or `authenticated` with `PREVIEW_PASSWORD`), `ROBOTS_INDEX=allow` to lift the default `noindex`, `RUN_MIGRATIONS_ON_START`, `SEED_DEMO`, `SYNC_SOURCES_ON_START`.
+
+## Standalone mode (no database to set up)
+
+`EMBEDDED_DB=true npm start` runs PostgreSQL inside the app process, applies the migrations, imports the AJN feeds, and re-reads them every 30 minutes (`SYNC_INTERVAL_MINUTES`). It needs no `DATABASE_URL`, no Cloud SQL and no secrets, and it only contacts the feed and audio hosts listed in `server/sources/sync.ts`. The catalog is rebuilt from the feeds on every start. This is what `cloudbuild.yaml` deploys; see `DEPLOY.md`. Set `DATABASE_URL` instead (and leave `EMBEDDED_DB` unset) to use an external Postgres.

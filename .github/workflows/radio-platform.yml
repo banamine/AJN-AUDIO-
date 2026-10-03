@@ -87,6 +87,38 @@ jobs:
         if: failure()
         run: docker logs ajn-radio
 
+  standalone-smoke:
+    name: standalone-smoke
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ajn-radio:ci .
+      - name: Run image standalone (no database anywhere)
+        run: |
+          docker run -d --name ajn-radio-standalone --network host \
+            -e PORT=8080 -e EMBEDDED_DB=true -e SEED_DEMO=false \
+            ajn-radio:ci
+      - name: Wait for /api/health
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/api/health | grep -q '"status":"ok"'; then echo "healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          docker logs ajn-radio-standalone
+          exit 1
+      - name: Channels exist; report episode count from the real AJN feeds
+        run: |
+          curl -fsS http://127.0.0.1:8080/api/channels | tee /tmp/channels.json
+          test "$(python3 -c "import json;print(len(json.load(open('/tmp/channels.json'))['channels']))")" -ge 2
+          COUNT=$(curl -fsS 'http://127.0.0.1:8080/api/channels/ajn-radio/episodes?limit=100' | python3 -c "import sys,json;print(len(json.load(sys.stdin)['episodes']))")
+          echo "::notice::AJN episodes imported in standalone mode: ${COUNT}"
+      - name: Container logs on failure
+        if: always()
+        run: docker logs ajn-radio-standalone
+
   package-zip:
     name: package-zip
     needs: verify

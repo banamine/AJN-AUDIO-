@@ -1,18 +1,18 @@
-# Cloud Build config for AJN Radio, STANDALONE: the app runs its own embedded database and imports
-# your AJN feeds itself. No Cloud SQL, no Secret Manager, no outside services. Same file for both paths:
-#   A) zip upload      -> app is at the source root, _APP_DIR stays "."
-#   B) GitHub trigger  -> --config radio-platform/cloudbuild.yaml with _APP_DIR=radio-platform
-# Want a persistent external Postgres instead? Use cloudbuild.cloudsql.yaml.
+# Cloud Build config for AJN Radio with an EXTERNAL Cloud SQL database (optional alternative).
+# The default is cloudbuild.yaml (standalone, no database to set up). Use this file only if you want
+# a persistent Cloud SQL Postgres: pass --config cloudbuild.cloudsql.yaml.
 # UNVERIFIED on Google Cloud: written from the Cloud Build / Cloud Run docs, never run there.
 substitutions:
   _REGION: us-central1
   _AR_REPO: ajn-radio            # Artifact Registry Docker repository (must already exist)
   _SERVICE: ajn-radio-preview    # Cloud Run service name
   _APP_DIR: "."
+  _CLOUDSQL_INSTANCE: ""         # PROJECT:REGION:INSTANCE  (required)
+  _DATABASE_URL_SECRET: ajn-radio-database-url   # Secret Manager secret names (must already exist)
+  _INGEST_TOKEN_SECRET: ajn-radio-ingest-token
   _AUTH_FLAG: --allow-unauthenticated  # public preview; use --no-allow-unauthenticated to require IAM
   _PREVIEW_ACCESS: public
-  _SYNC_INTERVAL_MINUTES: "30"   # how often the server re-reads your AJN feeds
-  _MAX_INSTANCES: "2"
+  _MAX_INSTANCES: "3"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -37,12 +37,13 @@ steps:
       - --platform=managed
       - ${_AUTH_FLAG}
       - --port=8080
-      - --memory=1Gi              # the embedded database lives in memory
       - --timeout=3600            # SSE streams are cut at the request timeout (max 3600s); clients reconnect
       - --min-instances=1
       - --max-instances=${_MAX_INSTANCES}
-      - --no-cpu-throttling       # lets the background feed refresh run between requests
-      - --set-env-vars=EMBEDDED_DB=true,SEED_DEMO=false,PREVIEW_ACCESS=${_PREVIEW_ACCESS},SYNC_INTERVAL_MINUTES=${_SYNC_INTERVAL_MINUTES}
+      - --no-cpu-throttling       # keeps the Postgres LISTEN connection alive between requests
+      - --add-cloudsql-instances=${_CLOUDSQL_INSTANCE}
+      - --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,RADIO_INGEST_TOKEN=${_INGEST_TOKEN_SECRET}:latest
+      - --set-env-vars=RUN_MIGRATIONS_ON_START=true,SEED_DEMO=false,SYNC_SOURCES_ON_START=true,PREVIEW_ACCESS=${_PREVIEW_ACCESS}
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/ajn-radio:$BUILD_ID

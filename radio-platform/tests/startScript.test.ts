@@ -52,3 +52,37 @@ test('npm start really boots the HTTP server in production mode (regression: -e 
     child.stderr.destroy();
   }
 });
+
+test('standalone mode (EMBEDDED_DB=true) boots with no external Postgres and reports a connected database', async () => {
+  const port = await freePort();
+  const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port), NODE_ENV: '', EMBEDDED_DB: 'true', SYNC_DISABLED: 'true' };
+  delete env.DATABASE_URL;
+  const child = spawn(process.execPath, ['--experimental-strip-types', 'server/index.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  try {
+    let body: { status?: string; database?: string } | null = null;
+    for (let attempt = 0; attempt < 120 && !body; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      body = await fetch(`http://127.0.0.1:${port}/api/health`).then(response => response.json() as Promise<{ status?: string; database?: string }>).catch(() => null);
+    }
+    assert.ok(body, `server never listened. Output:\n${output}`);
+    assert.equal(body.status, 'ok', output);
+    assert.equal(body.database, 'connected');
+    const channels = await fetch(`http://127.0.0.1:${port}/api/channels`);
+    assert.equal(channels.status, 200);
+    const exitCode = await new Promise<number | null>(resolve => {
+      const timer = setTimeout(() => resolve(-1), 10000);
+      child.once('exit', code => { clearTimeout(timer); resolve(code); });
+      child.kill('SIGTERM');
+    });
+    assert.equal(exitCode, 0, `expected clean exit, got ${exitCode}. Output:\n${output}`);
+  } finally {
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); else child.emit('exit');
+    await exited;
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
+});

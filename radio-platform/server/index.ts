@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { embeddedMode, stopEmbeddedDatabase } from './embeddedDb.ts';
 import cors from 'cors';
 import express, { type Response } from 'express';
 import { Client } from 'pg';
@@ -7,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { prisma } from './db.ts';
+import { startSourceSync, type SyncScheduler } from './sources/scheduler.ts';
 import { noindexMiddleware, previewAccessGate, robotsTxtHandler } from './preview.ts';
 import { resolveTimelinePosition } from '../shared/timeline.ts';
 import type { Channel as PrismaChannel, PodcastEpisode, RadioSegment } from '../src/generated/prisma/client.ts';
@@ -460,6 +462,8 @@ app.post('/api/ingest/channels/:slug/now-playing', async (req, res) => {
   } catch (error) { logApiFailure('Live metadata ingest failed', error); res.status(503).json({ error: 'Live metadata could not be published' }); }
 });
 
+let syncScheduler: SyncScheduler | null = null;
+
 async function start() {
   if (!isDevelopment) {
     app.use(express.static(path.resolve('dist')));
@@ -469,7 +473,14 @@ async function start() {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   }
-  await startMetadataNotifications();
+  if (!embeddedMode) await startMetadataNotifications();
+  // Standalone mode keeps its own catalog fresh; otherwise opt in with SYNC_INTERVAL_MINUTES (0 = off).
+  const intervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES ?? (embeddedMode ? 30 : 0));
+  if (process.env.SYNC_DISABLED !== 'true' && Number.isFinite(intervalMinutes) && (embeddedMode || intervalMinutes > 0)) {
+    syncScheduler = startSourceSync({ prisma, intervalMinutes: Number.isFinite(intervalMinutes) ? intervalMinutes : 30 });
+    // Give the first import a head start so the page is not empty, but never hold the server hostage to a slow feed.
+    await Promise.race([syncScheduler.firstRun, new Promise(resolve => setTimeout(resolve, 25_000).unref())]);
+  }
   const server = app.listen(port, '0.0.0.0', () => console.info(`AJN Radio ready on http://localhost:${port}`));
   installGracefulShutdown(server);
 }
@@ -482,7 +493,9 @@ export async function shutdownGracefully(server: { close: (callback: (error?: Er
   await stopMetadataNotifications().catch(() => undefined);
   server.closeAllConnections?.();
   await closed;
+  syncScheduler?.stop();
   await prisma.$disconnect().catch(() => undefined);
+  await stopEmbeddedDatabase();
 }
 
 function installGracefulShutdown(server: Parameters<typeof shutdownGracefully>[0]) {

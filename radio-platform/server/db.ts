@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './embeddedDb.ts'; // must finish first: in standalone mode it sets DATABASE_URL
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 
