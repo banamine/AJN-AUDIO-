@@ -75,3 +75,15 @@
 .podcast-channel small{margin:0;font:400 10px 'DM Mono',monospace;letter-spacing:.12em;text-transform:uppercase;opacity:.6}
 .podcast-channel.selected{border-color:var(--station);background:rgba(174,233,213,.09)}
 .podcast-channel:focus-visible,.episode-card:focus-visible,.episode-search input:focus-visible{outline:2px solid var(--station);outline-offset:2px}
+
+/* Fade-in when the station or podcast channel changes */
+.fade-in{animation:content-fade .38s ease-out both}
+@keyframes content-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.fade-in{animation:none}}
+
+/* Sort toggle + jump to current */
+.episode-tools{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0 0 16px}
+.episode-sort{display:flex;gap:8px;flex-wrap:wrap}
+.jump-current{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;background:rgba(67,224,138,.1);border:1px solid #43e08a;color:#43e08a;font:500 10px 'DM Mono',monospace;letter-spacing:.14em;cursor:pointer}
+.jump-current:hover,.jump-current:focus-visible{background:rgba(67,224,138,.2)}
+.episode-card:focus-visible{outline:2px solid #43e08a;outline-offset:2px}

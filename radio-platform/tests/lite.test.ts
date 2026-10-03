@@ -62,6 +62,13 @@ test('lite server: serves episodes and news from fetched sources, isolates a fai
     assert.ok(second.episodes.length > 0 && second.episodes[0].title !== page.episodes[0].title);
     assert.equal((await fetch(`${base}/api/channels/ajn-radio/episodes?type=bogus`)).status, 400);
     assert.equal((await fetch(`${base}/api/channels/nope/episodes`)).status, 404);
+    const newestAll = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=100`)).json() as { episodes: Array<{ id: string }> };
+    const oldestAll = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=100&order=oldest`)).json() as { episodes: Array<{ id: string }> };
+    assert.deepEqual(oldestAll.episodes.map(item => item.id), [...newestAll.episodes].reverse().map(item => item.id));
+    const oldestPage = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=2&order=oldest`)).json() as { episodes: Array<{ id: string }>; nextCursor: string | null };
+    const oldestNext = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=2&order=oldest&cursor=${oldestPage.nextCursor}`)).json() as { episodes: Array<{ id: string }> };
+    assert.deepEqual([...oldestPage.episodes, ...oldestNext.episodes].map(item => item.id), oldestAll.episodes.slice(0, 4).map(item => item.id));
+    assert.equal((await fetch(`${base}/api/channels/ajn-radio/episodes?order=sideways`)).status, 400);
     assert.equal((await fetch(`${base}/api/channels/ajn-radio/episodes?cursor=does-not-exist`)).status, 400);
     const healthy = await (await fetch(`${base}/api/health`)).json() as { status: string; content: string; failing: string[] };
     assert.deepEqual([healthy.status, healthy.content, healthy.failing], ['ok', 'ok', []]);

@@ -180,8 +180,11 @@ app.get('/api/channels/:slug/episodes', (req, res) => {
   const show = typeof req.query.show === 'string' ? req.query.show : undefined;
   const type = typeof req.query.type === 'string' ? req.query.type : undefined;
   if ((show && !/^[a-z0-9-]{1,64}$/.test(show)) || (type && !SHOW_TYPES.includes(type))) return res.status(400).json({ error: 'Invalid show or type filter' });
-  const list = channelEpisodes(req.params.slug, show, type);
-  if (!list) return res.status(404).json({ error: 'Podcast channel not found' });
+  const orderParam = req.query.order;
+  if (orderParam !== undefined && orderParam !== 'newest' && orderParam !== 'oldest') return res.status(400).json({ error: 'order must be newest or oldest' });
+  const found = channelEpisodes(req.params.slug, show, type);
+  if (!found) return res.status(404).json({ error: 'Podcast channel not found' });
+  const list = orderParam === 'oldest' ? [...found].reverse() : found;
   const limitParam = Number(req.query.limit ?? 24);
   const limit = Number.isInteger(limitParam) ? Math.min(100, Math.max(1, limitParam)) : 24;
   const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
