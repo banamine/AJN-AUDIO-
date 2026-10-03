@@ -9,7 +9,9 @@ export const decodeEntities = (value: string) => value.replace(/&(#x[0-9a-f]+|#\
 });
 const clean = (value: unknown, max: number): string | null => {
   if (typeof value !== 'string') return null;
-  const text = decodeEntities(decodeEntities(value.replace(/<[^>]*>/g, ' '))).replace(/\s+/g, ' ').trim();
+  let text = value.replace(/<[^>]*>/g, ' ');
+  for (let pass = 0; pass < 4; pass++) { const next = decodeEntities(text); if (next === text) break; text = next; } // feeds are often double or triple encoded
+  text = text.replace(/\s+/g, ' ').trim();
   return text ? text.slice(0, max) : null;
 };
 const safeUrl = (value: unknown): string | null => {

@@ -8,14 +8,14 @@ An independent radio app built alongside the AmplitudeJS library. It uses one `C
 2. Copy `.env.example` to `.env` and set `DATABASE_URL`. Set `RADIO_INGEST_TOKEN` if a live metadata source will call the ingest endpoint.
 3. Create the database and install dependencies with `npm install`.
 4. `npm install` generates Prisma Client through `postinstall`. For a new local database, apply the development migration with `npm run db:migrate -- --name radio_channels`.
-5. Load the demonstration channels: `npm run db:seed`.
+5. (Postgres variant only) Load the sample seed channels: `npm run db:seed`.
 6. Start the app with `npm run dev`; the React app and API are served at `http://localhost:3000`.
 
 Run `npm run typecheck`, `npm test`, and `npm run build` before shipping. The PostgreSQL-wire integration test uses an ephemeral PGlite instance to apply the SQL migration, exercise Prisma relations and seed idempotency, and call the HTTP and SSE APIs. Production uses PostgreSQL through `DATABASE_URL`.
 
 For production deployment, install dependencies, build the client, set `DATABASE_URL` and any ingest token, then apply committed migrations with `npx prisma migrate deploy`. Start the production server with `npm start`; it sets `NODE_ENV=production` and serves the built `dist/` files. `tsx` remains a development dependency for watch mode and the demo seed command; production runs TypeScript using Node's type stripping (Node 22.6 or newer).
 
-The client falls back to a small demonstration catalog while the API is unavailable. PostgreSQL is required for persisted channels, metadata ingestion, and server-sent events.
+If the API is unavailable the page shows a plain error message instead of sample channels. PostgreSQL is required for persisted channels, metadata ingestion, and server-sent events.
 
 ## Playback and metadata
 
