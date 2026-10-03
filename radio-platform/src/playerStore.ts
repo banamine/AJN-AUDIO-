@@ -4,7 +4,7 @@ export type ChannelType = 'live' | 'simulated' | 'on_demand';
 export type Segment = { id?: string; position: number; title: string; artist: string | null; audioUrl: string; durationSeconds: number };
 export type Episode = {
   id: string; title: string; description?: string | null; audioUrl: string; durationSeconds: number | null; publishedAt?: string | null;
-  airDate?: string | null; showSlug?: string | null; showType?: string | null; hourNumber?: number | null; variant?: string | null; needsReview?: boolean;
+  airDate?: string | null; showSlug?: string | null; showType?: string | null; hourNumber?: number | null; variant?: string | null; needsReview?: boolean; videoUrl?: string | null;
 };
 export type Channel = {
   id: string; slug: string; name: string; description?: string | null; genre?: string | null;

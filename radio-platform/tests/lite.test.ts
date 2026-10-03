@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { decodeEntities, parseNewsDigest } from '../server/news.ts';
-import { FEEDS, LIVE_CHANNELS, NEWS_URL, app, getText, refresh, refreshMinutes, store } from '../server/lite.ts';
+import { FEEDS, LIVE_CHANNELS, NEWS_URL, fileKey, app, getText, refresh, refreshMinutes, store } from '../server/lite.ts';
 
 const feedXml = (name: string) => readFileSync(new URL(`./fixtures/feeds/${name}.sample.xml`, import.meta.url), 'utf8');
 const digest = {
@@ -27,13 +27,17 @@ test('news digest: entities decoded, tags stripped, unsafe or link-less items dr
 });
 
 test('lite server: serves episodes and news from fetched sources, isolates a failing feed, keeps old data on failure', async () => {
-  const files: Record<string, string> = { 'Alex.xml': feedXml('Alex'), 'WarRoom.xml': feedXml('WarRoom'), 'SundayLive.xml': feedXml('SundayLive'), 'AJNHourlyAudio.xml': feedXml('AJNHourlyAudio') };
+  // Video feed with the same file keys for only the first two hourly items (hourly-mp3 -> hourly-m4v), so some episodes pair and the rest stay null.
+  const hourly = feedXml('AJNHourlyAudio');
+  const pieces = hourly.split('<item>');
+  const videoXml = [pieces[0], ...pieces.slice(1, 3)].join('<item>').replace(/hourly-mp3/g, 'hourly-m4v').replace(/\.mp3/g, '.m4v').replace(/audio\/mpeg/g, 'video/m4v') + '</channel></rss>';
+  const files: Record<string, string> = { 'Alex.xml': feedXml('Alex'), 'WarRoom.xml': feedXml('WarRoom'), 'SundayLive.xml': feedXml('SundayLive'), 'AJNHourlyAudio.xml': hourly, 'AJNHourlyVideo.xml': videoXml };
   let broken = false;
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = String(input);
     if (url === NEWS_URL) return new Response(JSON.stringify(digest), { status: 200 });
     const name = url.split('/').pop()!;
-    if (broken && name === 'WarRoom.xml') return new Response('nope', { status: 500 });
+    if (broken && (name === 'WarRoom.xml' || name === 'AJNHourlyVideo.xml')) return new Response('nope', { status: 500 });
     return files[name] ? new Response(files[name], { status: 200 }) : new Response('missing', { status: 404 });
   }) as typeof fetch;
 
@@ -79,9 +83,18 @@ test('lite server: serves episodes and news from fetched sources, isolates a fai
     assert.equal(news.top[0].title, 'M&S shoplifter caught');
     assert.equal((await fetch(`${base}/api/health`)).headers.get('x-robots-tag'), 'noindex, nofollow');
 
+    const withVideo = store.episodes.filter(episode => episode.videoUrl);
+    assert.ok(withVideo.length >= 1 && withVideo.length <= 2 && withVideo.length < store.episodes.length);
+    assert.ok(withVideo.every(episode => episode.videoUrl!.startsWith('https://archive.alexjoneslive.com/hourly-m4v/') && fileKey(episode.videoUrl!) === fileKey(episode.audioUrl)));
+    const apiEpisodes = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=100`)).json() as { episodes: Array<{ videoUrl: string | null }> };
+    assert.ok(apiEpisodes.episodes.some(episode => episode.videoUrl) && apiEpisodes.episodes.some(episode => episode.videoUrl === null));
+    assert.equal(((await (await fetch(`${base}/api/sources`)).json()) as { video: { lastStatus: string; items: number } }).video.lastStatus, 'ok');
+
     broken = true; // one feed fails: its previous episodes stay, the others still refresh, status says so
     await refresh(fetchImpl);
     assert.equal(store.episodes.length, total);
+    assert.equal(store.episodes.filter(episode => episode.videoUrl).length, withVideo.length); // video feed down: previous pairing kept, audio unaffected
+    assert.equal(store.videoStatus.lastStatus, 'error');
     const sources = await (await fetch(`${base}/api/sources`)).json() as { sources: Array<{ slug: string; lastStatus: string; lastError: string | null }> };
     assert.equal(sources.sources.find(source => source.slug === 'ajn-warroom')?.lastStatus, 'error');
     assert.equal(sources.sources.find(source => source.slug === 'ajn-alex')?.lastStatus, 'ok');

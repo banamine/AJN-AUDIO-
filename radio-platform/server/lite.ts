@@ -15,6 +15,7 @@ export const FEEDS = [
   { slug: 'ajn-sundaylive', name: 'Sunday Night Live', url: 'https://rss.alexjones.media/SundayLive.xml' },
   { slug: 'ajn-hourly-audio', name: 'AJN Hourly Audio', url: 'https://rss.alexjones.media/AJNHourlyAudio.xml' },
 ];
+export const VIDEO_FEED_URL = 'https://rss.alexjones.media/AJNHourlyVideo.xml';
 export const NEWS_URL = process.env.NEWS_DIGEST_URL ?? 'https://banamine.github.io/Daily-News-Digest-/data/current/data.json';
 const ALLOWED_AUDIO_HOSTS = ['archive.alexjoneslive.com'];
 const ALLOWED_FETCH_HOSTS = ['rss.alexjones.media', new URL(NEWS_URL).hostname];
@@ -44,7 +45,12 @@ const SHOW_TYPES = ['full_show', 'hour', 'segment', 'special', 'live'];
 export type Episode = {
   id: string; title: string; rawTitle: string; description: null; audioUrl: string; durationSeconds: null; publishedAt: string | null;
   airDate: string | null; showSlug: string | null; showType: string | null; hourNumber: number | null; variant: string | null; needsReview: boolean; channel: ChannelSlug;
+  /** Matching AJN hourly video (.m4v) when the video feed has the same file key; otherwise null. Never guessed. */
+  videoUrl: string | null;
 };
+/** `https://host/hourly-mp3/20261002_Fri_WarRoom-Hr3.mp3` -> `20261002_Fri_WarRoom-Hr3`. */
+export const fileKey = (url: string): string | null => { try { const name = new URL(url).pathname.split('/').pop() ?? ''; const stem = name.replace(/\.[A-Za-z0-9]+$/, ''); return stem || null; } catch { return null; } };
+const isVideoUrl = (value: string): boolean => { try { const u = new URL(value); return u.protocol === 'https:' && ALLOWED_AUDIO_HOSTS.includes(u.hostname) && /\.(m4v|mp4)$/i.test(u.pathname); } catch { return false; } };
 type FeedStatus = { slug: string; name: string; feedUrl: string; lastSyncAt: string | null; lastStatus: 'ok' | 'error' | 'pending'; lastError: string | null; episodes: number };
 
 export const store = {
@@ -53,6 +59,8 @@ export const store = {
   news: null as NewsDigest | null,
   newsFetchedAt: null as string | null,
   lastPodcastSuccess: null as string | null,
+  videoByKey: new Map<string, string>(),
+  videoStatus: { lastSyncAt: null as string | null, lastStatus: 'pending' as 'ok' | 'error' | 'pending', lastError: null as string | null, items: 0 },
   feeds: new Map<string, FeedStatus>(FEEDS.map(feed => [feed.slug, { slug: feed.slug, name: feed.name, feedUrl: feed.url, lastSyncAt: null, lastStatus: 'pending', lastError: null, episodes: 0 }])),
   newsStatus: { lastSyncAt: null as string | null, lastStatus: 'pending' as 'ok' | 'error' | 'pending', lastError: null as string | null },
   lastRefresh: 0,
@@ -99,7 +107,7 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<void> {
         episodes.push({
           id: createHash('sha1').update(`${feed.slug}:${item.guid}`).digest('hex').slice(0, 16), title: item.cleanTitle, rawTitle: item.rawTitle.slice(0, 512),
           description: null, audioUrl: item.audioUrl, durationSeconds: null, publishedAt: item.publishedAt ? item.publishedAt.toISOString() : null, airDate: item.airDate,
-          showSlug: item.showSlug, showType: item.showType, hourNumber: item.hourNumber, variant: item.variant, needsReview: item.needsReview, channel: channelSlugFor(item, EXCLUSIVE),
+          showSlug: item.showSlug, showType: item.showType, hourNumber: item.hourNumber, variant: item.variant, needsReview: item.needsReview, channel: channelSlugFor(item, EXCLUSIVE), videoUrl: null,
         });
       }
       if (items.length > 0 && episodes.length === 0) throw new Error('feed had items but none were playable');
@@ -112,6 +120,19 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<void> {
   // A feed that failed keeps its previous episodes; only a successful read replaces them.
   for (const [slug, episodes] of next) store.byFeed.set(slug, episodes);
   if (next.size > 0) store.lastPodcastSuccess = new Date().toISOString();
+  // Optional: pair each episode with its hourly video by file key. A failing video feed keeps the previous pairing and never affects audio.
+  try {
+    const videos = new Map<string, string>();
+    for (const item of parseFeedXml(await getText(VIDEO_FEED_URL, fetchImpl))) {
+      const key = item.enclosureUrl ? fileKey(item.enclosureUrl) : null;
+      if (key && item.enclosureUrl && isVideoUrl(item.enclosureUrl)) videos.set(key, item.enclosureUrl);
+    }
+    store.videoByKey = videos;
+    Object.assign(store.videoStatus, { lastSyncAt: new Date().toISOString(), lastStatus: 'ok', lastError: null, items: videos.size });
+  } catch (error) {
+    Object.assign(store.videoStatus, { lastSyncAt: new Date().toISOString(), lastStatus: 'error', lastError: message(error) });
+  }
+  for (const episodes of store.byFeed.values()) for (const episode of episodes) { const key = fileKey(episode.audioUrl); episode.videoUrl = key ? store.videoByKey.get(key) ?? null : null; }
   store.episodes = [...store.byFeed.values()].flat().sort(byEpisodeOrder);
   try {
     store.news = parseNewsDigest(JSON.parse(await getText(NEWS_URL, fetchImpl)));
@@ -217,7 +238,7 @@ app.get('/api/news', (_req, res) => {
 
 app.get('/api/sources', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ sources: [...store.feeds.values()], news: { url: NEWS_URL, ...store.newsStatus } });
+  res.json({ sources: [...store.feeds.values()], news: { url: NEWS_URL, ...store.newsStatus }, video: { url: VIDEO_FEED_URL, ...store.videoStatus } });
 });
 
 app.use(express.static(path.resolve('dist')));

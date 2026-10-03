@@ -97,6 +97,10 @@ Checked from the build sandbox: the four `stream.alexjones.media` URLs return HT
 **Not verified:** the two `audio.alexjoneslive.com:8443` links (connection reset from the sandbox, which may only block that port), and audible playback in a real browser (the sandbox browser has no AAC decoder).
 The streams send no readable track metadata, so the player shows the channel name and nothing is invented.
 
+## 5d. Watch video
+
+Each episode carries `videoUrl` when `AJNHourlyVideo.xml` has the same file key as its audio (checked live: all 110 hourly episodes pair; the full daily shows have no video, so `videoUrl` is `null`). The pairing is refreshed with the feeds; if the video feed is down, the previous pairing stays and audio is unaffected. `/api/sources` reports the video feed's status.
+
 ## 6. Adding more podcasts or news later
 
 - **Podcast feed:** add it to `FEEDS` in `server/lite.ts` and its audio host to `ALLOWED_AUDIO_HOSTS` (and its feed host to the fetch list).
