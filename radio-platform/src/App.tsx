@@ -8,22 +8,6 @@ import { type Channel, type Episode, type NowPlaying, usePlayerStore } from './p
 
 const palette = ['#aee9d5', '#f4c99a', '#b5b6f2', '#f19883', '#a9c4e3'];
 
-const demoChannels: Channel[] = [
-  { id: 'demo-after-hours', slug: 'after-hours', name: 'Demo Radio', genre: 'Demo audio', type: 'simulated', description: 'Sample MP3 tracks for player testing.', cycleStart: '2026-09-28T00:00:00.000Z', segments: [
-    { position: 0, title: 'Demo Track 01', artist: null, audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', durationSeconds: 372 },
-    { position: 1, title: 'Demo Track 02', artist: null, audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', durationSeconds: 415 },
-    { position: 2, title: 'Demo Track 03', artist: null, audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3', durationSeconds: 390 },
-    { position: 3, title: 'Demo Track 04', artist: null, audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3', durationSeconds: 426 },
-  ], episodes: [] },
-  { id: 'demo-daylight', slug: 'daylight-fm', name: 'SomaFM Indie Pop (demo)', genre: 'Demo stream', type: 'live', streamUrl: 'https://ice1.somafm.com/indiepop-128-mp3', segments: [], episodes: [] },
-  { id: 'demo-forma', slug: 'forma', name: 'SomaFM Drone Zone (demo)', genre: 'Demo stream', type: 'live', streamUrl: 'https://ice1.somafm.com/dronezone-128-mp3', segments: [], episodes: [] },
-  { id: 'demo-sundown', slug: 'sundown-club', name: 'SomaFM Groove Salad (demo)', genre: 'Demo stream', type: 'live', streamUrl: 'https://ice1.somafm.com/groovesalad-128-mp3', segments: [], episodes: [] },
-  { id: 'demo-podcast', slug: 'ajn-podcasts', name: 'Demo Episodes', genre: 'Sample audio', type: 'on_demand', segments: [], episodes: [
-    { id: 'episode-listening', title: 'Demo Episode 01', description: 'Sample MP3 for player testing; episode metadata was not supplied.', audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3', durationSeconds: null },
-    { id: 'episode-train', title: 'Demo Episode 02', description: 'Sample MP3 for player testing; episode metadata was not supplied.', audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3', durationSeconds: null },
-  ] },
-];
-
 export type EpisodeFilter = { show?: string; type?: string };
 export type EpisodeFacet = { show: string | null; type: string | null; count: number };
 const SHOW_LABELS: Record<string, string> = { 'alex-jones': 'Alex Jones', 'war-room': 'War Room', 'sunday-night-live': 'Sunday Night Live' };
@@ -70,6 +54,7 @@ export default function App() {
   const engineRef = useRef<RadioAudioEngine | null>(null);
   const loadedContent = useRef(new Set<string>());
   const lastActionKey = useRef<string | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [favorite, setFavorite] = useState(false);
@@ -77,7 +62,7 @@ export default function App() {
   const [loadingEpisodes, setLoadingEpisodes] = useState<string | null>(null);
   const [episodeFilters, setEpisodeFilters] = useState<Record<string, EpisodeFilter>>({});
   const [episodeFacets, setEpisodeFacets] = useState<Record<string, EpisodeFacet[]>>({});
-  const filteredChannels = useMemo(() => channels.filter(item => `${item.name} ${item.genre} ${item.city}`.toLowerCase().includes(search.toLowerCase())), [channels, search]);
+  const filteredChannels = useMemo(() => channels.filter(item => `${item.name} ${item.genre ?? ""} ${item.city ?? ""}`.toLowerCase().includes(search.toLowerCase())), [channels, search]);
   const channelIndex = channels.findIndex(item => item.id === channel?.id);
   const localTimeline = channel?.type === 'simulated' && channel.cycleStart ? resolveTimelinePosition(channel.segments, channel.cycleStart) : null;
   const activeSegment = nowPlaying?.segment ?? localTimeline?.segment ?? channel?.segments[nowPlaying?.segmentIndex ?? 0];
@@ -109,8 +94,10 @@ export default function App() {
         catalog.push(...data.channels);
         cursor = data.nextCursor ?? null;
       } while (cursor && mounted);
-      if (mounted && catalog.length) setChannels(catalog);
-    })().catch(error => { console.info('Using demo radio catalog while the API is unavailable.', error); if (mounted) setChannels(demoChannels); });
+      if (!mounted) return;
+      if (catalog.length) setChannels(catalog);
+      setCatalogStatus(catalog.length ? 'ready' : 'empty');
+    })().catch(error => { console.error('Channel catalog request failed', error); if (mounted) setCatalogStatus('error'); });
     return () => { mounted = false; };
   }, [setChannels]);
 
@@ -261,7 +248,7 @@ export default function App() {
 
     <section className="now-playing backdrop-blur-md bg-white/5 border border-white/10"><div className="now-art"><div className="art-sun"/><div className="art-horizon"/><span className="art-index">AJN — 0{Math.max(1, channelIndex + 1)}</span><Music2 size={20} className="art-note"/></div><div className="track-info"><div className="section-label"><span className="playing-eq"><i/><i/><i/></span>NOW PLAYING</div><div className="track-title">{title}</div><div className="track-subtitle">{artist}<span>·</span><span>{album ?? channel?.name ?? 'AJN Radio'}</span></div><div className="track-progress"><span>{formatTime(position || nowPlaying?.offsetSeconds || 0)}</span><div className="progress-line"><i style={{ width: `${progress}%` }}/></div><span>{channel?.type === 'live' ? 'LIVE' : formatTime(activeSegment?.durationSeconds ?? duration)}</span></div></div><div className="player-controls"><button aria-label="Previous channel" className="player-skip" onClick={() => tuneAdjacent(-1)}><SkipBack size={17} fill="currentColor"/></button><button aria-label={playing ? 'Pause' : 'Play'} className="play-button" onClick={togglePlayback}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button><button aria-label="Next channel" className="player-skip" onClick={() => tuneAdjacent(1)}><SkipForward size={17} fill="currentColor"/></button><button aria-label="Save station" className={`like-button ${favorite ? 'liked' : ''}`} onClick={() => setFavorite(value => !value)}><Heart size={17} fill={favorite ? 'currentColor' : 'none'}/></button></div><div className="listener-count"><span className="listener-live"><i/>LIVE</span></div></section>
 
-    <section className="station-section" id="stations"><div className="section-heading"><div><div className="section-label">THE SELECTED FREQUENCIES</div><h2>Find your <em>station.</em></h2></div><div className="station-heading-right"><span className="station-count">{String(channels.length).padStart(2, '0')} CHANNELS</span>{searchOpen && <label className="search-field"><Search size={14}/><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a frequency"/><button aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(''); }}><X size={14}/></button></label>}<button className="all-stations" onClick={() => setSearchOpen(value => !value)}>SEARCH CHANNELS <ArrowUpRight size={13}/></button></div></div><div className="station-grid">{filteredChannels.filter(item => item.type !== 'on_demand').map((item, index) => { const color = palette[index % palette.length]; return <button key={item.id} className={`station-card backdrop-blur-md bg-black/20 border border-white/10 ${channel?.id === item.id ? 'selected' : ''}`} style={{ '--card-accent': color } as CSSProperties} onClick={() => tune(item)}><span className="station-number">0{index + 1}</span><span className="station-status">{item.type === 'live' ? <><i/>LIVE</> : <><Waves size={12}/>24/7</>}</span><div className="station-card-art"><div className="card-art-shape shape-a"/><div className="card-art-shape shape-b"/><AudioLines size={16}/></div><span className="station-card-title">{item.name}</span><span className="station-card-genre">{item.genre}</span><span className="station-card-bottom"><span>{item.city}</span><span className="station-frequency">{item.frequency} <small>FM</small></span></span></button>; })}</div></section>
+    <section className="station-section" id="stations"><div className="section-heading"><div><div className="section-label">THE SELECTED FREQUENCIES</div><h2>Find your <em>station.</em></h2></div><div className="station-heading-right"><span className="station-count">{String(channels.length).padStart(2, '0')} CHANNELS</span>{searchOpen && <label className="search-field"><Search size={14}/><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a frequency"/><button aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(''); }}><X size={14}/></button></label>}<button className="all-stations" onClick={() => setSearchOpen(value => !value)}>SEARCH CHANNELS <ArrowUpRight size={13}/></button></div></div>{catalogStatus !== 'ready' && catalogStatus !== 'loading' && <p className="catalog-status" role="status">{catalogStatus === 'error' ? 'The channel catalog could not be loaded. Check your connection and reload.' : 'No channels have been published yet.'}</p>}{catalogStatus === 'loading' && <p className="catalog-status" role="status">Loading channels…</p>}<div className="station-grid">{filteredChannels.filter(item => item.type !== 'on_demand').map((item, index) => { const color = palette[index % palette.length]; return <button key={item.id} className={`station-card backdrop-blur-md bg-black/20 border border-white/10 ${channel?.id === item.id ? 'selected' : ''}`} style={{ '--card-accent': color } as CSSProperties} onClick={() => tune(item)}><span className="station-number">0{index + 1}</span><span className="station-status">{item.type === 'live' ? <><i/>LIVE</> : <><Waves size={12}/>24/7</>}</span><div className="station-card-art"><div className="card-art-shape shape-a"/><div className="card-art-shape shape-b"/><AudioLines size={16}/></div><span className="station-card-title">{item.name}</span><span className="station-card-genre">{item.genre ?? ''}</span><span className="station-card-bottom"><span>{item.city ?? ''}</span>{item.frequency && <span className="station-frequency">{item.frequency} <small>FM</small></span>}</span></button>; })}</div></section>
 
     <PodcastShelf podcasts={podcasts} activeSlug={channel?.slug} onSelect={tune} onPlay={playEpisode} cursors={episodePages} loading={loadingEpisodes} onLoadMore={loadMoreEpisodes} facets={episodeFacets} filters={episodeFilters} onFilter={applyEpisodeFilter} />
 
