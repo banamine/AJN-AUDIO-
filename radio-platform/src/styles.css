@@ -41,16 +41,19 @@
 
 .podcast-channels{display:flex;flex-wrap:wrap;gap:12px}
 
-/* Status colours: green = live audio, red = recorded segment that is playing */
+/* Status colours: red = live audio, green = recorded segment */
 .status-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid currentColor;border-radius:999px;font:500 10px/1 'DM Mono',monospace;letter-spacing:.14em;white-space:nowrap}
 .status-pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
-.status-pill.is-live{color:#43e08a;background:rgba(67,224,138,.1)}
+.status-pill.is-live{color:#ff4d45;background:rgba(255,77,69,.12)}
 .status-pill.is-live i{animation:pill-pulse 1.6s ease-in-out infinite}
-.status-pill.is-recorded{color:#ff6259;background:rgba(255,98,89,.1)}
-.listen-button.is-live{background:#43e08a;color:#04210f}
-.listen-button.is-recorded{background:#ff6259;color:#2a0805}
-.episode-card.playing{border-color:#ff6259;background:rgba(255,98,89,.08);box-shadow:inset 3px 0 0 #ff6259}
-.episode-card.playing .episode-play{color:#ff6259}
+.status-pill.is-recorded{color:#43e08a;background:rgba(67,224,138,.1)}
+.listen-button.is-live{background:#ff4d45;color:#2a0805}
+.listen-button.is-recorded{background:#43e08a;color:#04210f}
+.episode-card.playing{border-color:#43e08a;background:rgba(67,224,138,.07);box-shadow:inset 3px 0 0 #43e08a}
+.episode-card.playing .episode-play{color:#43e08a}
+.station-status.is-live{color:#ff4d45}
+.station-status.is-live i{background:#ff4d45}
+.station-card.selected .station-status.is-live{text-shadow:0 0 12px rgba(255,77,69,.6)}
 @keyframes pill-pulse{50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.status-pill.is-live i{animation:none}}
 

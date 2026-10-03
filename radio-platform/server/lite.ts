@@ -29,6 +29,16 @@ const CHANNELS = {
   'ajn-exclusive': { name: 'AJN Exclusive', description: 'Special editions from the AJN feeds.' },
 } as const;
 type ChannelSlug = keyof typeof CHANNELS;
+/** Live audio streams, exactly as listed on https://rss.alexjones.media/ ("Live Audio Stream Links"). Played by the browser directly. */
+export const LIVE_CHANNELS = [
+  { slug: 'live-alex-aac', name: 'Alex Jones Show (AAC)', url: 'https://stream.alexjones.media/alexjonesshow' },
+  { slug: 'live-alex-mp3', name: 'Alex Jones Show (MP3)', url: 'https://stream.alexjones.media/alexjonesshow.mp3' },
+  { slug: 'live-alex-opus', name: 'Alex Jones Show (OPUS)', url: 'https://audio.alexjoneslive.com:8443/alexjonesshow.opus' },
+  { slug: 'live-alex-aac-alt', name: 'Alex Jones Show (alternate AAC)', url: 'https://audio.alexjoneslive.com:8443/alexjonesshow.aac' },
+  { slug: 'live-warroom', name: 'War Room with Harrison Smith', url: 'https://stream.alexjones.media/warroom/' },
+  { slug: 'live-network', name: 'Network Feed - All Live Shows', url: 'https://stream.alexjones.media/stream/7/' },
+] as const;
+const liveChannel = (slug: string) => LIVE_CHANNELS.find(channel => channel.slug === slug);
 const SHOW_TYPES = ['full_show', 'hour', 'segment', 'special', 'live'];
 
 export type Episode = {
@@ -138,13 +148,26 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/channels', (_req, res) => {
   refreshIfStale();
   res.setHeader('Cache-Control', 'public, max-age=10');
+  const base = { genre: 'Talk', city: null, frequency: null, cycleStart: null, currentTitle: null, currentArtist: null, currentAlbum: null, segments: [], episodes: [] };
   res.json({
-    channels: (Object.keys(CHANNELS) as ChannelSlug[]).map(slug => ({
-      id: slug, slug, name: CHANNELS[slug].name, description: CHANNELS[slug].description, genre: 'Talk', city: null, frequency: null, type: 'on_demand', streamUrl: null,
-      cycleStart: null, currentTitle: null, currentArtist: null, currentAlbum: null, segments: [], episodes: [],
-    })),
+    channels: [
+      ...(Object.keys(CHANNELS) as ChannelSlug[]).map(slug => ({ ...base, id: slug, slug, name: CHANNELS[slug].name, description: CHANNELS[slug].description, type: 'on_demand', streamUrl: null })),
+      ...LIVE_CHANNELS.map(live => ({ ...base, id: live.slug, slug: live.slug, name: live.name, description: 'Live AJN audio stream.', type: 'live', streamUrl: live.url })),
+    ],
     nextCursor: null, serverTime: new Date().toISOString(),
   });
+});
+
+// The page asks for now-playing / events when a live channel is selected. The streams carry no metadata we can read,
+// so nothing is invented: title/artist stay null and the page shows the channel name.
+app.get('/api/channels/:slug/now-playing', (req, res) => {
+  if (!liveChannel(req.params.slug)) return res.status(404).json({ error: 'Channel not found' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ type: 'live', title: null, artist: null, album: null, metadataUpdatedAt: null, serverTime: new Date().toISOString() });
+});
+app.get('/api/channels/:slug/events', (req, res) => {
+  if (!liveChannel(req.params.slug)) return res.status(404).json({ error: 'Channel not found' });
+  res.status(204).end(); // no event stream in the simple server; 204 tells the browser not to reconnect
 });
 
 function channelEpisodes(slug: string, show?: string, type?: string) {

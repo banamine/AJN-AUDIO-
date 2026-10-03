@@ -89,6 +89,14 @@ curl -s https://YOUR-SERVICE.run.app/api/sources    # last status of each of you
 - **API the page uses (all in `server/lite.ts`):** `/api/channels`, `/api/channels/:slug/episodes` (+`/facets`), `/api/news`, plus `/api/health` and `/api/sources`.
   The earlier live/simulated-station routes (`now-playing`, `events`, `content`) are intentionally not part of the simple server; they exist only in the database variant (`server/index.ts`). The page does not request them for on-demand channels.
 
+## 5c. Live audio streams
+
+Six live links, copied from your AJN index page (`rss.alexjones.media`), are served as `live` channels and played by the browser directly (nothing proxied): Alex Jones Show (AAC, MP3, OPUS, alternate AAC), War Room with Harrison Smith, Network Feed - All Live Shows.
+Edit `LIVE_CHANNELS` in `server/lite.ts` to change them. Live shows red **LIVE AUDIO**, recorded episodes show green.
+Checked from the build sandbox: the four `stream.alexjones.media` URLs return HTTP 200 `audio/aacp` with data flowing and `Access-Control-Allow-Origin: *`.
+**Not verified:** the two `audio.alexjoneslive.com:8443` links (connection reset from the sandbox, which may only block that port), and audible playback in a real browser (the sandbox browser has no AAC decoder).
+The streams send no readable track metadata, so the player shows the channel name and nothing is invented.
+
 ## 6. Adding more podcasts or news later
 
 - **Podcast feed:** add it to `FEEDS` in `server/lite.ts` and its audio host to `ALLOWED_AUDIO_HOSTS` (and its feed host to the fetch list).

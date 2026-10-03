@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { decodeEntities, parseNewsDigest } from '../server/news.ts';
-import { FEEDS, NEWS_URL, app, getText, refresh, refreshMinutes, store } from '../server/lite.ts';
+import { FEEDS, LIVE_CHANNELS, NEWS_URL, app, getText, refresh, refreshMinutes, store } from '../server/lite.ts';
 
 const feedXml = (name: string) => readFileSync(new URL(`./fixtures/feeds/${name}.sample.xml`, import.meta.url), 'utf8');
 const digest = {
@@ -45,7 +45,15 @@ test('lite server: serves episodes and news from fetched sources, isolates a fai
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
     const channels = await (await fetch(`${base}/api/channels`)).json() as { channels: Array<{ slug: string; type: string }> };
-    assert.deepEqual(channels.channels.map(channel => channel.slug).sort(), ['ajn-exclusive', 'ajn-radio']);
+    assert.deepEqual(channels.channels.filter(channel => channel.type === 'on_demand').map(channel => channel.slug).sort(), ['ajn-exclusive', 'ajn-radio']);
+    const live = (channels.channels as Array<{ slug: string; type: string; streamUrl: string | null; name: string }>).filter(channel => channel.type === 'live');
+    assert.deepEqual(live.map(channel => channel.name), ['Alex Jones Show (AAC)', 'Alex Jones Show (MP3)', 'Alex Jones Show (OPUS)', 'Alex Jones Show (alternate AAC)', 'War Room with Harrison Smith', 'Network Feed - All Live Shows']);
+    assert.ok(live.every((channel, index) => channel.streamUrl === LIVE_CHANNELS[index].url && channel.streamUrl.startsWith('https://')));
+    const nowPlaying = await fetch(`${base}/api/channels/live-warroom/now-playing`);
+    assert.deepEqual([nowPlaying.status, (await nowPlaying.json() as { type: string; title: unknown }).title], [200, null]); // nothing invented
+    assert.equal((await fetch(`${base}/api/channels/live-warroom/events`)).status, 204);
+    assert.equal((await fetch(`${base}/api/channels/ajn-radio/now-playing`)).status, 404);
+    assert.equal((await fetch(`${base}/api/channels/live-warroom/episodes`)).status, 404);
     const page = await (await fetch(`${base}/api/channels/ajn-radio/episodes?limit=5`)).json() as { episodes: Array<{ audioUrl: string; airDate: string | null; title: string }>; nextCursor: string | null };
     assert.equal(page.episodes.length, 5);
     assert.ok(page.episodes.every(episode => episode.audioUrl.startsWith('https://archive.alexjoneslive.com/')));
