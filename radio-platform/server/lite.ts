@@ -44,7 +44,7 @@ const liveChannel = (slug: string) => LIVE_CHANNELS.find(channel => channel.slug
 const SHOW_TYPES = ['full_show', 'hour', 'segment', 'special', 'live'];
 
 export type Episode = {
-  id: string; title: string; rawTitle: string; description: null; audioUrl: string; durationSeconds: null; publishedAt: string | null;
+  id: string; title: string; rawTitle: string; description: null; audioUrl: string; durationSeconds: null; sizeBytes: number | null; publishedAt: string | null;
   airDate: string | null; showSlug: string | null; showType: string | null; hourNumber: number | null; variant: string | null; needsReview: boolean; channel: ChannelSlug;
   /** Matching AJN hourly video (.m4v) when the video feed has the same file key; otherwise null. Never guessed. */
   videoUrl: string | null;
@@ -107,7 +107,7 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<void> {
         try { const audio = new URL(item.audioUrl); if (audio.protocol !== 'https:' || !ALLOWED_AUDIO_HOSTS.includes(audio.hostname)) continue; } catch { continue; }
         episodes.push({
           id: createHash('sha1').update(`${feed.slug}:${item.guid}`).digest('hex').slice(0, 16), title: item.cleanTitle, rawTitle: item.rawTitle.slice(0, 512),
-          description: null, audioUrl: item.audioUrl, durationSeconds: null, publishedAt: item.publishedAt ? item.publishedAt.toISOString() : null, airDate: item.airDate,
+          description: null, audioUrl: item.audioUrl, durationSeconds: null, sizeBytes: raw.enclosureBytes ?? null, publishedAt: item.publishedAt ? item.publishedAt.toISOString() : null, airDate: item.airDate,
           showSlug: item.showSlug, showType: item.showType, hourNumber: item.hourNumber, variant: item.variant, needsReview: item.needsReview, channel: channelSlugFor(item, EXCLUSIVE), videoUrl: null,
         });
       }

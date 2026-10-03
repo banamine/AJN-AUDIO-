@@ -21,7 +21,8 @@ const SEGMENT_RE = /^(?<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(?<show>Alex|WarRoom|Su
 // Daily feed title: "Alex Jones 2026-Oct-02 Friday"
 const TITLE_RE = /^(?<show>Alex Jones|War Room|Sunday Night Live)\s+(?<date>\d{4}-[A-Za-z]{3}-\d{2})\s+(?<dow>[A-Za-z]+day)$/;
 
-export type FeedItem = { guid: string | null; title: string; pubDate: string | null; enclosureUrl: string | null };
+/** `enclosureBytes` is the feed's enclosure `length` (file size). The AJN feeds publish no durations, so size is the only length signal. */
+export type FeedItem = { guid: string | null; title: string; pubDate: string | null; enclosureUrl: string | null; enclosureBytes?: number | null };
 
 export type ClassifiedItem = {
   guid: string;
@@ -60,6 +61,7 @@ export function parseFeedXml(xml: string): FeedItem[] {
       title: text(item.title) ?? '',
       pubDate: text(item.pubDate),
       enclosureUrl: enclosure && typeof enclosure['@_url'] === 'string' ? (enclosure['@_url'] as string) : null,
+      enclosureBytes: enclosure && Number.isFinite(Number(enclosure['@_length'])) && Number(enclosure['@_length']) > 0 ? Math.round(Number(enclosure['@_length'])) : null,
     };
   });
 }

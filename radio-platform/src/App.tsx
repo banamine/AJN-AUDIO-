@@ -1,26 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { motion } from 'motion/react';
-import { ArrowDownRight, ArrowUpRight, AudioLines, Heart, Headphones, Menu, Music2, Pause, Play, Search, SkipBack, SkipForward, Volume2, Waves, X } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, AudioLines, Check, Heart, Headphones, Menu, Music2, Pause, Play, Search, SkipBack, Share2, SkipForward, Volume2, Waves, X } from 'lucide-react';
 import { resolveTimelinePosition } from '../shared/timeline';
 import { RadioAudioEngine } from './audioEngine';
 import { currentOffsetSeconds, decidePlayback } from './playback';
 import { NewsSection, NewsTicker, useNews } from './News';
-import { type Channel, type Episode, type NowPlaying, usePlayerStore } from './playerStore';
+import Visualizer from './Visualizer';
+import { sortEpisodes, type EpisodeOrder, type EpisodeSort } from './episodeSort';
+import { FINISHED_FRACTION, type Channel, type Episode, type NowPlaying, usePlayerStore } from './playerStore';
 
 const palette = ['#aee9d5', '#f4c99a', '#b5b6f2', '#f19883', '#a9c4e3'];
 
-export type EpisodeOrder = 'newest' | 'oldest';
 export type EpisodeFilter = { show?: string; type?: string; order?: EpisodeOrder };
 export type EpisodeFacet = { show: string | null; type: string | null; count: number };
 const SHOW_LABELS: Record<string, string> = { 'alex-jones': 'Alex Jones', 'war-room': 'War Room', 'sunday-night-live': 'Sunday Night Live' };
 const TYPE_LABELS: Record<string, string> = { full_show: 'Full shows', hour: 'Hours', special: 'Specials', segment: 'Segments', live: 'Live' };
 const TYPE_BADGES: Record<string, string> = { full_show: 'FULL SHOW', hour: 'HOUR', special: 'SPECIAL', segment: 'SEGMENT', live: 'LIVE' };
-
-/** Same key order as the server (air date, publish date, hour, id), in either direction, so the grid is right even if a server ignores `order`. */
-function sortEpisodes(list: Episode[], order: EpisodeOrder): Episode[] {
-  const direction = order === 'oldest' ? -1 : 1;
-  return [...list].sort((a, b) => direction * ((b.airDate ?? '').localeCompare(a.airDate ?? '') || (b.publishedAt ?? '').localeCompare(a.publishedAt ?? '') || (b.hourNumber ?? -1) - (a.hourNumber ?? -1)) || a.id.localeCompare(b.id));
-}
 
 function episodesUrl(slug: string, filter: EpisodeFilter, cursor?: string | null) {
   const url = new URL(`/api/channels/${encodeURIComponent(slug)}/episodes`, window.location.origin);
@@ -30,6 +25,17 @@ function episodesUrl(slug: string, filter: EpisodeFilter, cursor?: string | null
   if (filter.order === 'oldest') url.searchParams.set('order', 'oldest');
   if (cursor) url.searchParams.set('cursor', cursor);
   return url;
+}
+
+async function copyText(text: string) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* clipboard blocked: try the older route */ }
+  try {
+    const field = Object.assign(document.createElement('textarea'), { value: text });
+    field.setAttribute('readonly', ''); field.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(field); field.select();
+    const ok = document.execCommand('copy'); field.remove();
+    return ok;
+  } catch { return false; }
 }
 
 function formatTime(seconds: number) {
@@ -273,7 +279,7 @@ export default function App() {
       <div className="dial-stage"><div className="dial-glow"/><div className="dial-orbit orbit-one"/><div className="dial-orbit orbit-two"/><motion.div className="radio-dial" animate={{ rotate: Math.max(0, channelIndex) * (360 / Math.max(1, channels.length)) }} transition={{ type: 'spring', stiffness: 52, damping: 15 }}><svg viewBox="0 0 360 360" className="dial-svg" role="img" aria-label="Tuning dial"><defs><filter id="dialGlow"><feGaussianBlur stdDeviation="7" result="blur"/><feFlood floodColor={stationColor} floodOpacity=".45"/><feComposite in2="blur" operator="in"/><feComposite in="SourceGraphic"/></filter></defs><circle cx="180" cy="180" r="151" fill="none" stroke="rgba(222,239,229,.17)"/><circle cx="180" cy="180" r="142" fill="none" stroke="rgba(222,239,229,.35)" strokeDasharray="1 8"/>{Array.from({ length: 41 }, (_, i) => { const angle = ((i / 40) * 260 - 130 - 90) * Math.PI / 180; const major = i % 5 === 0; const inner = major ? 108 : 116; return <g key={i}><line x1={180 + Math.cos(angle) * 124} y1={180 + Math.sin(angle) * 124} x2={180 + Math.cos(angle) * inner} y2={180 + Math.sin(angle) * inner} stroke={major ? 'rgba(239,248,238,.72)' : 'rgba(239,248,238,.3)'} strokeWidth={major ? 1.5 : 1}/>{major && <text x={180 + Math.cos(angle) * 91} y={183 + Math.sin(angle) * 91} fill="rgba(239,248,238,.66)" fontSize="9" textAnchor="middle" fontFamily="DM Mono">{(87.5 + i * .5).toFixed(1)}</text>}</g>; })}<circle cx="180" cy="180" r="72" fill="#09100f" stroke="rgba(232,247,237,.2)"/><circle cx="180" cy="180" r="60" fill="rgba(255,255,255,.02)" stroke={stationColor} strokeOpacity=".5" filter="url(#dialGlow)"/><text x="180" y="169" textAnchor="middle" fill={stationColor} fontSize="9" letterSpacing="3" fontFamily="DM Mono">AJN RADIO</text><text x="180" y="192" textAnchor="middle" fill="#f3f4e9" fontSize="16" fontWeight="700" fontFamily="Manrope">{channel?.frequency ?? 'AJN'}</text><text x="180" y="209" textAnchor="middle" fill="rgba(233,242,232,.53)" fontSize="8" letterSpacing="1.6" fontFamily="DM Mono">MHz</text><path d="M180 25 L175 39 L185 39 Z" fill={stationColor} filter="url(#dialGlow)"/></svg></motion.div><div className="dial-caption"><span className="dial-live-dot"/>{channel?.city ?? 'AJN AUDIO'}<span className="caption-slash">/</span>{channel?.type === 'live' ? 'LIVE SIGNAL' : channel?.type === 'on_demand' ? 'RECORDED SHOWS' : '24/7 BROADCAST'}</div><div className="signal-strength"><span>STEREO</span><div><i/><i/><i/><i/><i/></div><span>HI-FI</span></div></div>
     </section>
 
-    <section key={channel?.slug} className="now-playing fade-in backdrop-blur-md bg-white/5 border border-white/10"><div className="now-art"><div className="art-sun"/><div className="art-horizon"/><span className="art-index">AJN — 0{Math.max(1, channelIndex + 1)}</span><Music2 size={20} className="art-note"/></div><div className="track-info"><div className="section-label"><span className="playing-eq"><i/><i/><i/></span>NOW PLAYING</div><div className="track-title">{title}</div><div className="track-subtitle">{artist}<span>·</span><span>{album ?? channel?.name ?? 'AJN Radio'}</span></div><div className="track-progress"><span>{formatTime(position || nowPlaying?.offsetSeconds || 0)}</span><div className="progress-line"><i style={{ width: `${progress}%` }}/></div><span>{channel?.type === 'live' ? 'LIVE' : formatTime(activeSegment?.durationSeconds ?? duration)}</span></div></div><div className="player-controls"><button aria-label="Previous channel" className="player-skip" onClick={() => tuneAdjacent(-1)}><SkipBack size={17} fill="currentColor"/></button><button aria-label={playing ? 'Pause' : 'Play'} className="play-button" onClick={togglePlayback}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button><button aria-label="Next channel" className="player-skip" onClick={() => tuneAdjacent(1)}><SkipForward size={17} fill="currentColor"/></button><button aria-label="Save station" className={`like-button ${favorite ? 'liked' : ''}`} onClick={() => setFavorite(value => !value)}><Heart size={17} fill={favorite ? 'currentColor' : 'none'}/></button></div>{channel?.type === 'live' ? <div className="listener-count"><span className="status-pill is-live"><i/>LIVE AUDIO</span></div> : episode ? <div className="listener-count"><span className="status-pill is-recorded"><i/>RECORDED · {TYPE_BADGES[episode.showType ?? ''] ?? 'SHOW'}</span></div> : null}</section>
+    <section key={channel?.slug} className="now-playing fade-in backdrop-blur-md bg-white/5 border border-white/10"><div className="now-art"><div className="art-sun"/><div className="art-horizon"/><span className="art-index">AJN — 0{Math.max(1, channelIndex + 1)}</span><Music2 size={20} className="art-note"/></div><div className="track-info"><div className="section-label"><span className="playing-eq"><i/><i/><i/></span>NOW PLAYING</div><div className="track-title">{title}</div><div className="track-subtitle">{artist}<span>·</span><span>{album ?? channel?.name ?? 'AJN Radio'}</span></div><div className="track-progress"><span>{formatTime(position || nowPlaying?.offsetSeconds || 0)}</span><div className="progress-line"><i style={{ width: `${progress}%` }}/></div><span>{channel?.type === 'live' ? 'LIVE' : formatTime(activeSegment?.durationSeconds ?? duration)}</span></div><Visualizer getAnalyser={() => engineRef.current?.getAnalyser() ?? null} playing={playing} accent={stationColor}/></div><div className="player-controls"><button aria-label="Previous channel" className="player-skip" onClick={() => tuneAdjacent(-1)}><SkipBack size={17} fill="currentColor"/></button><button aria-label={playing ? 'Pause' : 'Play'} className="play-button" onClick={togglePlayback}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button><button aria-label="Next channel" className="player-skip" onClick={() => tuneAdjacent(1)}><SkipForward size={17} fill="currentColor"/></button><button aria-label="Save station" className={`like-button ${favorite ? 'liked' : ''}`} onClick={() => setFavorite(value => !value)}><Heart size={17} fill={favorite ? 'currentColor' : 'none'}/></button></div>{channel?.type === 'live' ? <div className="listener-count"><span className="status-pill is-live"><i/>LIVE AUDIO</span></div> : episode ? <div className="listener-count"><span className="status-pill is-recorded"><i/>RECORDED · {TYPE_BADGES[episode.showType ?? ''] ?? 'SHOW'}</span></div> : null}</section>
 
     {hasStations && <section className="station-section" id="stations"><div className="section-heading"><div><div className="section-label">AJN LIVE AUDIO STREAMS</div><h2>On the air, <em>right now.</em></h2></div><div className="station-heading-right"><span className="station-count">{String(channels.filter(item => item.type !== 'on_demand').length).padStart(2, '0')} LIVE STREAMS</span>{searchOpen && <label className="search-field"><Search size={14}/><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a frequency"/><button aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(''); }}><X size={14}/></button></label>}<button className="all-stations" onClick={() => setSearchOpen(value => !value)}>SEARCH CHANNELS <ArrowUpRight size={13}/></button></div></div>{catalogStatus !== 'ready' && catalogStatus !== 'loading' && <p className="catalog-status" role="status">{catalogStatus === 'error' ? 'The channel catalog could not be loaded. Check your connection and reload.' : 'No channels have been published yet.'}</p>}{catalogStatus === 'loading' && <p className="catalog-status" role="status">Loading channels…</p>}<div className="station-grid">{filteredChannels.filter(item => item.type !== 'on_demand').map((item, index) => { const color = palette[index % palette.length]; return <button key={item.id} className={`station-card backdrop-blur-md bg-black/20 border border-white/10 ${channel?.id === item.id ? 'selected' : ''}`} style={{ '--card-accent': color } as CSSProperties} onClick={() => tune(item)}><span className="station-number">0{index + 1}</span><span className={`station-status ${item.type === 'live' ? 'is-live' : ''}`}>{item.type === 'live' ? <><i/>LIVE AUDIO</> : <><Waves size={12}/>24/7</>}</span><div className="station-card-art"><div className="card-art-shape shape-a"/><div className="card-art-shape shape-b"/><AudioLines size={16}/></div><span className="station-card-title">{item.name}</span><span className="station-card-genre">{item.genre ?? ''}</span><span className="station-card-bottom"><span>{item.city ?? ''}</span>{item.frequency && <span className="station-frequency">{item.frequency} <small>FM</small></span>}</span></button>; })}</div></section>}
 
@@ -307,9 +313,45 @@ function PodcastShelf({ podcasts, playingId, activeSlug, onSelect, onPlay, curso
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
   const gridRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { setQuery(''); }, [visible?.slug]); // a search typed for one podcast channel should not hide another's episodes
+  const [durationSort, setDurationSort] = useState<'longest' | 'shortest' | null>(null);
+  const [sharedId, setSharedId] = useState<string | null>(null);
+  const [shareNote, setShareNote] = useState('');
+  const shareTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const savedProgress = usePlayerStore(state => state.episodeProgress);
+  const activeId = usePlayerStore(state => state.activeEpisode?.id);
+  const livePosition = usePlayerStore(state => state.position);
+  const liveDuration = usePlayerStore(state => state.duration);
+  useEffect(() => () => clearTimeout(shareTimer.current), []);
+  useEffect(() => { setQuery(''); setDurationSort(null); }, [visible?.slug]);
+  const flashShare = (id: string | null, note: string) => {
+    clearTimeout(shareTimer.current);
+    setSharedId(id); setShareNote(note);
+    shareTimer.current = setTimeout(() => { setSharedId(null); setShareNote(''); }, 1800);
+  };
+  const shareEpisode = async (item: Episode) => {
+    const url = new URL(item.audioUrl, window.location.href).toString();
+    // Phones and tablets get the system share sheet; desktops copy the link, because a share dialog there is slower than a paste.
+    if (typeof navigator.share === 'function' && window.matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ title: item.title, url }); flashShare(item.id, 'Shared'); return; }
+      catch (error) { if ((error as DOMException)?.name === 'AbortError') return; }
+    }
+    if (await copyText(url)) flashShare(item.id, 'Link copied'); else flashShare(null, 'Could not copy the link');
+  }; // a search typed for one podcast channel should not hide another's episodes
   const order: EpisodeOrder = (visible && filters[visible.slug]?.order) || 'newest';
+  const sort: EpisodeSort = durationSort ?? order;
   const playingLoaded = Boolean(playingId && visible?.episodes.some(item => item.id === playingId));
+  const renderShare = (item: Episode) => {
+    const done = sharedId === item.id;
+    return <button type="button" className={`episode-share ${done ? 'done' : ''}`} aria-label={`Share ${item.title}`} data-feedback={done ? shareNote : undefined} onClick={() => { void shareEpisode(item); }}>{done ? <Check size={14}/> : <Share2 size={14}/>}</button>;
+  };
+  const renderProgress = (item: Episode) => {
+    const current = activeId === item.id && liveDuration > 0 ? { position: livePosition, duration: liveDuration } : savedProgress[item.id];
+    if (!current || current.duration <= 0 || current.position < 1) return null;
+    const fraction = Math.min(1, current.position / current.duration);
+    if (fraction >= FINISHED_FRACTION) return null; // finished: no "partially played" bar
+    const percent = Math.round(fraction * 100);
+    return <span className="episode-progress" role="progressbar" aria-label="Played so far" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }}/></span>;
+  };
   const jumpToCurrent = () => {
     const scroll = () => {
       const card = gridRef.current?.querySelector<HTMLElement>('[aria-current="true"]');
@@ -341,14 +383,24 @@ function PodcastShelf({ podcasts, playingId, activeSlug, onSelect, onPlay, curso
       </div>;
     })}
     {visible && <div className="episode-tools">
-      <div className="episode-sort" role="group" aria-label="Sort episodes">
-        {(['newest', 'oldest'] as const).map(value => <button key={value} type="button" aria-pressed={order === value} className={`filter-chip ${order === value ? 'selected' : ''}`} disabled={loading === visible.slug} onClick={() => { if (order !== value) onFilter(visible, { ...(filters[visible.slug] ?? {}), order: value }); }}>{value === 'newest' ? 'NEWEST FIRST' : 'OLDEST FIRST'}</button>)}
-      </div>
+      <label className="episode-select"><span className="section-label">SORT BY</span>
+        <select value={sort} disabled={loading === visible.slug} aria-label="Sort episodes" onChange={event => {
+          const value = event.target.value as EpisodeSort;
+          if (value === 'longest' || value === 'shortest') { setDurationSort(value); return; }
+          setDurationSort(null);
+          if (value !== order) onFilter(visible, { ...(filters[visible.slug] ?? {}), order: value });
+        }}>
+          <optgroup label="Date"><option value="newest">Date · newest first</option><option value="oldest">Date · oldest first</option></optgroup>
+          <optgroup label="Length"><option value="longest">Length · longest first</option><option value="shortest">Length · shortest first</option></optgroup>
+        </select>
+      </label>
+      {durationSort && <span className="episode-note">Length is estimated from file size (the feeds list no durations){cursors[visible.slug] ? ', among the episodes loaded so far' : ''}.</span>}
       {playingLoaded && <button type="button" className="jump-current" onClick={jumpToCurrent}><Play size={11} fill="currentColor"/> JUMP TO CURRENT</button>}
     </div>}
     {visible && <label className="episode-search"><Search size={14} aria-hidden="true"/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search loaded episodes by title" aria-label="Search episodes by title"/>{query && <button type="button" aria-label="Clear episode search" onClick={() => setQuery('')}><X size={14}/></button>}</label>}
     {needle && visible && !visible.episodes.some(item => item.title.toLowerCase().includes(needle)) && <p className="catalog-status" role="status">No loaded episodes match “{query.trim()}”.{cursors[visible.slug] ? ' Use “More from” below to load older episodes.' : ''}</p>}
-    <div className="episode-grid" ref={gridRef}>{shown.flatMap(podcast => sortEpisodes(podcast.episodes, order).filter(item => !needle || item.title.toLowerCase().includes(needle)).map((item, index) => <button className={`episode-card ${playingId === item.id ? 'playing' : ''}`} aria-current={playingId === item.id ? 'true' : undefined} key={item.id} onClick={() => onPlay(podcast, item)}><span className="episode-cover" style={{ '--cover-accent': palette[(index + 1) % palette.length] } as CSSProperties}><span>AJN<br/>STUDIO</span><Headphones size={20}/></span><span className="episode-meta"><span className="section-label">{podcast.name.toUpperCase()}{item.showType ? ` · ${TYPE_BADGES[item.showType] ?? item.showType.toUpperCase()}` : ''}</span><strong>{item.title}</strong>{item.airDate ? <small>Aired {item.airDate}</small> : item.description ? <small>{item.description}</small> : null}{item.needsReview ? <small>Date needs review</small> : null}<span className="episode-play"><Play size={12} fill="currentColor"/> LISTEN TO EPISODE <span>{item.durationSeconds ? formatTime(item.durationSeconds) : ''}</span></span></span></button>))}</div>
+    <p className="sr-only" role="status" aria-live="polite">{shareNote}</p>
+    <div className="episode-grid" ref={gridRef}>{shown.flatMap(podcast => sortEpisodes(podcast.episodes, sort).filter(item => !needle || item.title.toLowerCase().includes(needle)).map((item, index) => <div className={`episode-card ${playingId === item.id ? 'playing' : ''}`} key={item.id}><button type="button" className="episode-open" aria-current={playingId === item.id ? 'true' : undefined} onClick={() => onPlay(podcast, item)}><span className="episode-cover" style={{ '--cover-accent': palette[(index + 1) % palette.length] } as CSSProperties}><span>AJN<br/>STUDIO</span><Headphones size={20}/></span><span className="episode-meta"><span className="section-label">{podcast.name.toUpperCase()}{item.showType ? ` · ${TYPE_BADGES[item.showType] ?? item.showType.toUpperCase()}` : ''}</span><strong>{item.title}</strong>{item.airDate ? <small>Aired {item.airDate}</small> : item.description ? <small>{item.description}</small> : null}{item.needsReview ? <small>Date needs review</small> : null}<span className="episode-play"><Play size={12} fill="currentColor"/> LISTEN TO EPISODE <span>{item.durationSeconds ? formatTime(item.durationSeconds) : ''}</span></span></span></button>{renderShare(item)}{renderProgress(item)}</div>))}</div>
     {shown.map(podcast => cursors[podcast.slug] && <button key={`more-${podcast.id}`} className="load-more" disabled={loading === podcast.slug} onClick={() => onLoadMore(podcast)}>{loading === podcast.slug ? 'LOADING…' : `MORE FROM ${podcast.name.toUpperCase()}`} <ArrowDownRight size={14}/></button>)}
     </div>
   </section>;

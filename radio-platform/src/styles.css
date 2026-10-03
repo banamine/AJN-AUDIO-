@@ -87,3 +87,32 @@
 .jump-current{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;background:rgba(67,224,138,.1);border:1px solid #43e08a;color:#43e08a;font:500 10px 'DM Mono',monospace;letter-spacing:.14em;cursor:pointer}
 .jump-current:hover,.jump-current:focus-visible{background:rgba(67,224,138,.2)}
 .episode-card:focus-visible{outline:2px solid #43e08a;outline-offset:2px}
+
+/* Episode card: the card is a wrapper so the Share button is not nested inside the play button. */
+.episode-card{position:relative;padding:0;gap:0;overflow:hidden}
+.episode-open{flex:1;min-width:0;display:flex;gap:17px;align-items:center;padding:14px 52px 16px 14px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.episode-open:focus-visible{outline:2px solid #43e08a;outline-offset:-3px}
+.episode-card:has(.episode-open:focus-visible){outline:none}
+.episode-card.playing .episode-open:focus-visible{outline-color:#43e08a}
+@media(max-width:760px){.episode-open{gap:12px;padding:10px 48px 14px 10px}}
+.episode-share{position:absolute;top:9px;right:9px;width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(222,238,225,.14);background:rgba(10,16,14,.55);color:#aebdb1;cursor:pointer;transition:color .2s,border-color .2s,background .2s}
+.episode-share:hover{color:#eef6ee;border-color:rgba(213,243,224,.45)}
+.episode-share:focus-visible{outline:2px solid var(--station);outline-offset:2px}
+.episode-share.done{color:#43e08a;border-color:#43e08a;background:rgba(67,224,138,.12);animation:share-pop .5s ease-out}
+.episode-share.done::after{content:attr(data-feedback);position:absolute;right:0;top:calc(100% + 6px);padding:4px 8px;white-space:nowrap;font:8px var(--mono);letter-spacing:.8px;color:#43e08a;background:rgba(10,16,14,.92);border:1px solid rgba(67,224,138,.4);animation:share-note 1.8s ease-out forwards;pointer-events:none;z-index:2}
+@keyframes share-pop{0%{transform:scale(.8)}55%{transform:scale(1.18)}100%{transform:scale(1)}}
+@keyframes share-note{0%{opacity:0;transform:translateY(-3px)}12%,80%{opacity:1;transform:none}100%{opacity:0}}
+.episode-progress{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(222,238,225,.1);pointer-events:none}
+.episode-progress i{display:block;height:100%;background:#43e08a;box-shadow:0 0 8px rgba(67,224,138,.55);transition:width .4s linear}
+.episode-select{display:flex;align-items:center;gap:10px}
+.episode-select select{appearance:none;background:rgba(212,230,218,.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23c8d5ca' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 11px center;border:1px solid rgba(222,238,225,.16);color:#dbe6dc;font:9px var(--mono);letter-spacing:.8px;padding:9px 32px 9px 12px;min-height:34px;cursor:pointer}
+.episode-select select:hover{border-color:rgba(213,243,224,.4)}
+.episode-select select:focus-visible{outline:2px solid var(--station);outline-offset:2px}
+.episode-select select:disabled{opacity:.5;cursor:progress}
+.episode-select option,.episode-select optgroup{background:#0d1413;color:#dbe6dc}
+.episode-note{font:8px var(--mono);letter-spacing:.7px;color:#7e8b81}
+
+/* Audio visualizer under the progress line. */
+.visualizer{display:block;width:100%;max-width:340px;height:38px;margin-top:10px;opacity:.9}
+.visualizer[data-mode="idle"]{opacity:.35}
+@media(prefers-reduced-motion:reduce){.episode-share.done{animation:none}.episode-share.done::after{animation:none;opacity:1}.episode-progress i{transition:none}}

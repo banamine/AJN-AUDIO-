@@ -9,6 +9,18 @@ export type EngineTimers = {
 };
 
 export const MAX_LIVE_RECONNECT_ATTEMPTS = 8;
+/**
+ * Hosts verified to send `Access-Control-Allow-Origin: *`. Only these live streams are loaded in CORS mode so the
+ * spectrum can read them; setting crossOrigin on a host without that header would stop the audio from loading at all.
+ */
+export const CORS_LIVE_HOSTS: ReadonlySet<string> = new Set(['stream.alexjones.media']);
+type CapturableElement = HTMLAudioElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream };
+const captureOf = (element: HTMLAudioElement) => { const capturable = element as CapturableElement; return capturable.captureStream ?? capturable.mozCaptureStream; };
+
+export function liveUsesCors(url: string, canCapture: boolean, base = 'https://example.invalid/') {
+  if (!canCapture) return false;
+  try { return CORS_LIVE_HOSTS.has(new URL(url, base).hostname); } catch { return false; }
+}
 export const LIVE_STALL_TIMEOUT_MS = 10_000;
 
 /** Exponential backoff with jitter for reconnecting a dropped live stream. */
@@ -22,6 +34,7 @@ type LiveSession = {
   handlers: LiveHandlers;
   element: HTMLAudioElement;
   attempt: number;
+  cors: boolean;
   retryTimer: unknown;
   stallTimer: unknown;
   remove: () => void;
@@ -40,6 +53,9 @@ export class RadioAudioEngine {
   private warmedUrl: string | null = null;
   private live: LiveSession | null = null;
   private timers: EngineTimers;
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private tap: { session: LiveSession; node: MediaStreamAudioSourceNode } | null = null;
 
   constructor(active: HTMLAudioElement, warm: HTMLAudioElement, timers: Partial<EngineTimers> = {}) {
     this.active = active;
@@ -110,8 +126,43 @@ export class RadioAudioEngine {
     } catch (error) { onError(error); }
   }
 
+  /**
+   * A read-only spectrum tap for the live stream that is playing, or null when none is available (recorded audio,
+   * a host without CORS, a browser without captureStream, or playback not started yet). It listens to a copy of the
+   * element's output and is never connected to the speakers, so it cannot change what the listener hears.
+   */
+  getAnalyser(): AnalyserNode | null {
+    const session = this.live;
+    if (!session || !session.cors || session.element.paused) return null;
+    if (this.tap?.session === session) return this.analyser;
+    this.dropTap();
+    try {
+      const capture = captureOf(session.element);
+      const Context = globalThis.AudioContext;
+      if (!capture || !Context) return null;
+      const stream = capture.call(session.element);
+      if (stream.getAudioTracks().length === 0) return null; // tracks appear once playback has really started; try again next frame
+      this.audioContext ??= new Context();
+      if (this.audioContext.state === 'suspended') void this.audioContext.resume().catch(() => undefined);
+      this.analyser ??= Object.assign(this.audioContext.createAnalyser(), { fftSize: 256, smoothingTimeConstant: 0.82 });
+      const node = this.audioContext.createMediaStreamSource(stream);
+      node.connect(this.analyser);
+      this.tap = { session, node };
+      return this.analyser;
+    } catch { return null; }
+  }
+
+  private dropTap() {
+    try { this.tap?.node.disconnect(); } catch { /* already disconnected */ }
+    this.tap = null;
+  }
+
   dispose() {
     this.stopLive();
+    this.dropTap();
+    void this.audioContext?.close().catch(() => undefined);
+    this.audioContext = null;
+    this.analyser = null;
     this.active.pause();
     this.warm.pause();
     this.active.onloadedmetadata = null;
@@ -122,7 +173,7 @@ export class RadioAudioEngine {
     this.stopLive();
     const element = this.active;
     element.onended = null;
-    const session: LiveSession = { url, handlers, element, attempt: 0, retryTimer: null, stallTimer: null, remove: () => undefined };
+    const session: LiveSession = { url, handlers, element, attempt: 0, cors: liveUsesCors(url, Boolean(captureOf(element)), document.baseURI), retryTimer: null, stallTimer: null, remove: () => undefined };
     const clearStall = () => {
       if (session.stallTimer === null) return;
       this.timers.clearTimeout(session.stallTimer);
@@ -147,6 +198,7 @@ export class RadioAudioEngine {
     const session = this.live;
     if (!session) return;
     this.live = null;
+    this.dropTap();
     session.remove();
     if (session.retryTimer !== null) this.timers.clearTimeout(session.retryTimer);
     if (session.stallTimer !== null) this.timers.clearTimeout(session.stallTimer);
@@ -161,6 +213,7 @@ export class RadioAudioEngine {
       giveUp?.();
       return;
     }
+    if (session.attempt >= 1) session.cors = false; // still failing: fall back to plain playback (no spectrum) rather than risk a CORS-blocked load
     session.handlers.onStatus?.('reconnecting');
     const delay = reconnectDelayMs(session.attempt++, this.timers.random);
     session.retryTimer = this.timers.setTimeout(() => {
@@ -176,14 +229,22 @@ export class RadioAudioEngine {
     element.onloadedmetadata = null;
     element.removeAttribute('src'); // drop the stale buffer so playback resumes at the live edge
     element.load();
+    this.dropTap();
+    this.setCors(element, session.cors);
     element.src = this.absoluteUrl(session.url);
     element.load();
     element.volume = this.volume;
     return element.play();
   }
 
+  private setCors(element: HTMLAudioElement, enabled: boolean) {
+    if (enabled) element.crossOrigin = 'anonymous';
+    else element.removeAttribute('crossorigin');
+  }
+
   private playUrl(url: string) {
     this.stopLive();
+    this.setCors(this.active, false);
     this.active.onended = null;
     const source = this.absoluteUrl(url);
     if (this.active.src !== source) {
@@ -197,6 +258,7 @@ export class RadioAudioEngine {
 
   private playFile(url: string, offsetSeconds: number, onError: (error: unknown) => void) {
     const source = this.absoluteUrl(url);
+    this.setCors(this.active, false);
     this.active.onended = null;
     this.active.onloadedmetadata = null;
     this.active.volume = this.volume;
@@ -216,6 +278,7 @@ export class RadioAudioEngine {
 
   private loadFile(url: string, offsetSeconds: number) {
     const source = this.absoluteUrl(url);
+    this.setCors(this.active, false);
     if (this.active.src === source && this.active.readyState >= HTMLMediaElement.HAVE_METADATA) {
       this.active.currentTime = this.clamp(offsetSeconds);
       this.active.volume = this.volume;
