@@ -6,7 +6,7 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "dev": "tsx watch server/lite.ts",
+    "dev": "tsx watch server/lite.ts --dev",
     "dev:web": "vite",
     "dev:db": "tsx watch server/index.ts --dev",
     "build": "vite build",

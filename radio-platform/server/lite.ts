@@ -2,6 +2,7 @@
 // to the web player. No database, no secrets. Only the hosts listed below are ever contacted.
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -241,12 +242,33 @@ app.get('/api/sources', (_req, res) => {
   res.json({ sources: [...store.feeds.values()], news: { url: NEWS_URL, ...store.newsStatus }, video: { url: VIDEO_FEED_URL, ...store.videoStatus } });
 });
 
-app.use(express.static(path.resolve('dist')));
-app.get('*', (_req, res) => res.sendFile(path.resolve('dist/index.html')));
+// The built client lives in <app root>/dist. Resolve it from this file, not from the shell's working
+// directory, so it is found however the host starts the server (Cloud Run, AI Studio, npm start).
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const distDir = path.join(appRoot, 'dist');
+export const isDevelopment = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+
+function mountBuiltClient() {
+  app.use(express.static(distDir));
+  app.get('*', (_req, res) => {
+    const indexPath = path.join(distDir, 'index.html');
+    if (!fs.existsSync(indexPath)) {
+      // Never crash with ENOENT: tell the visitor (and the platform) the build is missing.
+      res.status(503).set('Retry-After', '30').type('text/plain').send('AJN Radio: the web app has not been built yet (dist/index.html is missing). Run "npm run build", then reload.');
+      return;
+    }
+    res.sendFile(indexPath, error => { if (error && !res.headersSent) res.status(503).type('text/plain').send('AJN Radio: web app file unavailable.'); });
+  });
+}
 
 const port = Number(process.env.PORT ?? 3000);
 async function start() {
   // Give the first read a head start so the page is not empty, but never hold the server hostage to a slow host.
+  if (isDevelopment) {
+    // Dev hosts (AI Studio preview) run the source tree with no build step: let Vite serve the client.
+    const { createServer } = await import('vite');
+    app.use((await createServer({ root: appRoot, server: { middlewareMode: true }, appType: 'spa' })).middlewares);
+  } else mountBuiltClient();
   if (process.env.SKIP_INITIAL_REFRESH === 'true') void refreshOnce();
   else await Promise.race([refreshOnce(), new Promise(resolve => setTimeout(resolve, 20_000).unref())]);
   const server = app.listen(port, '0.0.0.0', () => console.info(`AJN Radio ready on http://localhost:${port} (${store.episodes.length} episodes, ${store.news?.top.length ?? 0} top stories)`));
