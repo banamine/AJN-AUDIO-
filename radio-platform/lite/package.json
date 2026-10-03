@@ -1,0 +1,11 @@
+{
+  "name": "ajn-radio-lite-runtime",
+  "private": true,
+  "type": "module",
+  "description": "Runtime dependencies of the simple server (server/lite.ts). Nothing else is installed in the image.",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fast-xml-parser": "^4.5.7"
+  }
+}

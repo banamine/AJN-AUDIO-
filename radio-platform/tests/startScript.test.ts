@@ -12,14 +12,14 @@ const freePort = () => new Promise<number>((resolve, reject) => {
 
 test('npm start really boots the HTTP server in production mode (regression: -e import never started it)', async () => {
   const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
-  assert.match(scripts.start, /server\/index\.ts/);
+  assert.match(scripts.start, /server\/lite\.ts/);
   assert.doesNotMatch(scripts.start, /\s-e\s/);
   const port = await freePort();
   // Run exactly what `npm start` runs, but directly, so SIGTERM reaches the server (npm would orphan it).
   const [command, ...args] = (scripts.start as string).split(/\s+/);
   assert.equal(command, 'node');
   const child = spawn(process.execPath, args, {
-    env: { ...process.env, PORT: String(port), NODE_ENV: '', DATABASE_URL: 'postgresql://x:y@127.0.0.1:1/none' },
+    env: { ...process.env, PORT: String(port), NODE_ENV: '', SKIP_INITIAL_REFRESH: 'true' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -32,7 +32,7 @@ test('npm start really boots the HTTP server in production mode (regression: -e 
       body = await fetch(`http://127.0.0.1:${port}/api/health`).then(response => response.json() as Promise<{ status?: string }>).catch(() => null);
     }
     assert.ok(body, `server never listened on ${port}. Output:\n${output}`);
-    assert.equal(body.status, 'degraded'); // no database reachable here, but the server is up
+    assert.equal(body.status, 'ok'); // the simple server needs no database
     assert.doesNotMatch(output, /vite/i); // production must not load the dev server
     const robots = await fetch(`http://127.0.0.1:${port}/robots.txt`);
     assert.match(await robots.text(), /Disallow: \//);

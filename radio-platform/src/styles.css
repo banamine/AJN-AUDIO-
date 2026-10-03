@@ -15,3 +15,75 @@
 .podcast-channel small{margin-left:8px;opacity:.7}
 
 .catalog-status{margin:12px 0;opacity:.8;font-size:.95rem}
+
+/* News ticker + daily briefing (same palette as the rest of the page) */
+.news-ticker{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--line);margin:0 -20px;padding:0 20px;height:38px;overflow:hidden}
+.ticker-label{flex:none;font:8px var(--mono);letter-spacing:1.5px;color:var(--station);display:flex;align-items:center;gap:8px}
+.ticker-label::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--station);box-shadow:0 0 10px var(--station-glow)}
+.ticker-window{overflow:hidden;flex:1;mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
+.ticker-track{display:inline-flex;white-space:nowrap;animation:ticker-scroll 110s linear infinite;will-change:transform}
+.news-ticker:hover .ticker-track,.news-ticker:focus-within .ticker-track{animation-play-state:paused}
+.ticker-copy{display:inline-flex}
+.ticker-item{color:#c8d5ca;text-decoration:none;font-size:13px;padding:0 28px 0 0;display:inline-flex;gap:10px;align-items:center}
+.ticker-item b{font:8px var(--mono);letter-spacing:1px;color:var(--muted);font-weight:400}
+.ticker-item:hover,.ticker-item:focus-visible{color:#fff;text-decoration:underline}
+@keyframes ticker-scroll{to{transform:translateX(-50%)}}
+@media(prefers-reduced-motion:reduce){.ticker-track{animation:none}.ticker-window{overflow-x:auto;mask-image:none}.ticker-copy{display:none}}
+.news-section{padding:4px 0 76px}
+.news-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.news-card{display:flex;flex-direction:column;gap:9px;padding:16px;border:1px solid rgba(222,238,225,.1);background:rgba(212,230,218,.026);backdrop-filter:blur(14px);color:inherit;text-decoration:none;transition:border-color .2s,transform .2s}
+.news-card:hover,.news-card:focus-visible{border-color:rgba(213,243,224,.4);transform:translateY(-1px)}
+.news-meta{font:8px var(--mono);letter-spacing:1.2px;color:var(--muted)}
+.news-title{display:flex;gap:8px;justify-content:space-between;align-items:flex-start;font-size:16px;font-weight:500;letter-spacing:-.3px;line-height:1.35}
+.news-title svg{flex:none;margin-top:3px;opacity:.6}
+.news-excerpt{font-size:13px;line-height:1.55;color:#aab7ac;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+@media(max-width:760px){.news-grid{grid-template-columns:1fr}.news-ticker{margin:0 -6%;padding:0 6%}}
+
+.podcast-channels{display:flex;flex-wrap:wrap;gap:12px}
+
+/* Status colours: red = live audio, green = recorded segment */
+.status-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border:1px solid currentColor;border-radius:999px;font:500 10px/1 'DM Mono',monospace;letter-spacing:.14em;white-space:nowrap}
+.status-pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.status-pill.is-live{color:#ff4d45;background:rgba(255,77,69,.12)}
+.status-pill.is-live i{animation:pill-pulse 1.6s ease-in-out infinite}
+.status-pill.is-recorded{color:#43e08a;background:rgba(67,224,138,.1)}
+.listen-button.is-live{background:#ff4d45;color:#2a0805}
+.listen-button.is-recorded{background:#43e08a;color:#04210f}
+.episode-card.playing{border-color:#43e08a;background:rgba(67,224,138,.07);box-shadow:inset 3px 0 0 #43e08a}
+.episode-card.playing .episode-play{color:#43e08a}
+.station-status.is-live{color:#ff4d45}
+.station-status.is-live i{background:#ff4d45}
+.station-card.selected .station-status.is-live{text-shadow:0 0 12px rgba(255,77,69,.6)}
+@keyframes pill-pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.status-pill.is-live i{animation:none}}
+
+/* Episode title search */
+.episode-search{display:flex;align-items:center;gap:10px;max-width:420px;margin:0 0 16px;padding:0 12px;height:40px;border:1px solid rgba(222,238,225,.18);background:rgba(212,230,218,.03);color:rgba(233,242,232,.7)}
+.episode-search:focus-within{border-color:var(--station)}
+.episode-search input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f1f6ee;font:400 12px 'DM Mono',monospace;letter-spacing:.04em}
+.episode-search button{background:none;border:0;color:inherit;cursor:pointer;display:grid;place-items:center}
+/* Volume wave: bars rise with the volume and move only while audio is playing */
+.volume-wave{display:inline-flex;align-items:center;gap:2px;height:16px;margin:0 2px}
+.volume-wave i{width:2px;height:calc(3px + 12px * var(--vol,.5));border-radius:2px;background:var(--station);opacity:.55;transform-origin:center}
+.volume-control.is-active .volume-wave i{opacity:.95;animation:volume-wave 1.1s ease-in-out infinite}
+.volume-control.is-active .volume-wave i:nth-child(2){animation-delay:.15s}.volume-control.is-active .volume-wave i:nth-child(3){animation-delay:.3s}.volume-control.is-active .volume-wave i:nth-child(4){animation-delay:.45s}.volume-control.is-active .volume-wave i:nth-child(5){animation-delay:.6s}
+@keyframes volume-wave{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+@media (prefers-reduced-motion:reduce){.volume-control.is-active .volume-wave i{animation:none}}
+/* Podcast channel tabs */
+.podcast-channels{margin:0 0 18px}
+.podcast-channel{display:inline-flex;align-items:center;gap:10px;padding:10px 16px;border:1px solid rgba(222,238,225,.16);background:rgba(212,230,218,.03);color:#e9f2e8;cursor:pointer;font:500 15px 'Manrope',sans-serif}
+.podcast-channel small{margin:0;font:400 10px 'DM Mono',monospace;letter-spacing:.12em;text-transform:uppercase;opacity:.6}
+.podcast-channel.selected{border-color:var(--station);background:rgba(174,233,213,.09)}
+.podcast-channel:focus-visible,.episode-card:focus-visible,.episode-search input:focus-visible{outline:2px solid var(--station);outline-offset:2px}
+
+/* Fade-in when the station or podcast channel changes */
+.fade-in{animation:content-fade .38s ease-out both}
+@keyframes content-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.fade-in{animation:none}}
+
+/* Sort toggle + jump to current */
+.episode-tools{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0 0 16px}
+.episode-sort{display:flex;gap:8px;flex-wrap:wrap}
+.jump-current{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;background:rgba(67,224,138,.1);border:1px solid #43e08a;color:#43e08a;font:500 10px 'DM Mono',monospace;letter-spacing:.14em;cursor:pointer}
+.jump-current:hover,.jump-current:focus-visible{background:rgba(67,224,138,.2)}
+.episode-card:focus-visible{outline:2px solid #43e08a;outline-offset:2px}
