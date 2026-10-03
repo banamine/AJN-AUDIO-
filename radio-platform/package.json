@@ -6,9 +6,12 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "dev": "tsx watch server/index.ts --dev",
+    "dev": "tsx watch server/lite.ts",
+    "dev:web": "vite",
+    "dev:db": "tsx watch server/index.ts --dev",
     "build": "vite build",
-    "start": "node --experimental-strip-types server/index.ts",
+    "start": "node --experimental-strip-types server/lite.ts",
+    "start:db": "node --experimental-strip-types server/index.ts",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "package:zip": "node scripts/package-zip.mjs",

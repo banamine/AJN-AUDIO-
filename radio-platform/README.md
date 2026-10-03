@@ -43,3 +43,8 @@ For multiple server instances, run an SSE-capable load balancer with connection 
 ## Preview deployment
 
 See `DEPLOY.md`. Runtime switches: `PREVIEW_ACCESS` (`public` default, or `authenticated` with `PREVIEW_PASSWORD`), `ROBOTS_INDEX=allow` to lift the default `noindex`, `RUN_MIGRATIONS_ON_START`, `SEED_DEMO`, `SYNC_SOURCES_ON_START`.
+
+
+## Simple mode (default)
+
+`npm start` runs `server/lite.ts`: it fetches the four AJN feeds and the Daily News Digest into memory and serves them to the web player (episodes, filters, news ticker and news list). No database. Run `npm run build` first (it serves `dist/`). The earlier Postgres-backed server is `npm run start:db`. See `DEPLOY.md`.

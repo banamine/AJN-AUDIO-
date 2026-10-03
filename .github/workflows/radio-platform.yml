@@ -47,6 +47,40 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ajn-radio:ci .
+      - name: Image size
+        run: docker images ajn-radio:ci --format 'image size {{.Size}}'
+      - name: Run the container (no database, no secrets)
+        run: docker run -d --name ajn-radio --network host -e PORT=8080 ajn-radio:ci
+      - name: Wait for /api/health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/api/health | grep -q '"status":"ok"'; then echo "healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          docker logs ajn-radio
+          exit 1
+      - name: Page, API and real sources
+        run: |
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          curl -fsSI http://127.0.0.1:8080/ | grep -qi 'x-robots-tag: noindex'
+          curl -fsS http://127.0.0.1:8080/api/channels | python3 -c "import sys,json; assert len(json.load(sys.stdin)['channels'])>=2"
+          EPISODES=$(curl -fsS 'http://127.0.0.1:8080/api/channels/ajn-radio/episodes?limit=100' | python3 -c "import sys,json; print(len(json.load(sys.stdin)['episodes']))")
+          NEWS=$(curl -fsS http://127.0.0.1:8080/api/news | python3 -c "import sys,json; print(len(json.load(sys.stdin)['top']))" || echo 0)
+          echo "::notice::AJN episodes served: ${EPISODES}; top news stories: ${NEWS}"
+          curl -fsS http://127.0.0.1:8080/api/sources
+      - name: Container logs
+        if: always()
+        run: docker logs ajn-radio
+
+  container-smoke-db:
+    name: container-smoke-db
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -64,28 +98,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t ajn-radio:ci .
+        run: docker build -f Dockerfile.db -t ajn-radio:ci-db .
       - name: Run image against Postgres
         run: |
-          docker run -d --name ajn-radio --network host \
+          docker run -d --name ajn-radio-db --network host \
             -e PORT=8080 \
             -e DATABASE_URL='postgresql://radio:radio@127.0.0.1:5432/ajn_radio?schema=public' \
             -e RUN_MIGRATIONS_ON_START=true -e SEED_DEMO=true \
             -e RADIO_INGEST_TOKEN=ci-smoke-token-0123456789abcdef \
-            ajn-radio:ci
+            ajn-radio:ci-db
       - name: Wait for /api/health
         run: |
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1; then echo "healthy after ${i}s"; exit 0; fi
             sleep 1
           done
-          docker logs ajn-radio
+          docker logs ajn-radio-db
           exit 1
       - name: Smoke test
         run: bash scripts/smoke.sh http://127.0.0.1:8080
       - name: Container logs on failure
         if: failure()
-        run: docker logs ajn-radio
+        run: docker logs ajn-radio-db
 
   package-zip:
     name: package-zip
