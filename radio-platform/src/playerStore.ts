@@ -2,14 +2,17 @@ import { create } from 'zustand';
 
 export type ChannelType = 'live' | 'simulated' | 'on_demand';
 export type Segment = { id?: string; position: number; title: string; artist: string | null; audioUrl: string; durationSeconds: number };
-export type Episode = { id: string; title: string; description?: string | null; audioUrl: string; durationSeconds: number | null; publishedAt?: string | null };
+export type Episode = {
+  id: string; title: string; description?: string | null; audioUrl: string; durationSeconds: number | null; publishedAt?: string | null;
+  airDate?: string | null; showSlug?: string | null; showType?: string | null; hourNumber?: number | null; variant?: string | null; needsReview?: boolean;
+};
 export type Channel = {
   id: string; slug: string; name: string; description?: string | null; genre?: string | null;
   city?: string | null; frequency?: string | null; type: ChannelType; streamUrl?: string | null;
   cycleStart?: string | null; currentTitle?: string | null; currentArtist?: string | null; currentAlbum?: string | null;
   segments: Segment[]; episodes: Episode[];
 };
-export type NowPlaying = { type?: ChannelType; title?: string | null; artist?: string | null; album?: string | null; segment?: Segment; segmentIndex?: number; offsetSeconds?: number; cycleOffsetSeconds?: number; totalDurationSeconds?: number; serverTime?: string; metadataUpdatedAt?: string | null };
+export type NowPlaying = { type?: ChannelType; title?: string | null; artist?: string | null; album?: string | null; segment?: Segment; segmentIndex?: number; offsetSeconds?: number; cycleOffsetSeconds?: number; totalDurationSeconds?: number; serverTime?: string; metadataUpdatedAt?: string | null; /** performance.now() timestamp when this payload arrived */ receivedAt?: number };
 
 type PlayerState = {
   channels: Channel[];

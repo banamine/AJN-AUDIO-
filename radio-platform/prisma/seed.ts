@@ -5,17 +5,17 @@ import { PrismaClient } from '../src/generated/prisma/client.ts';
 export async function seedDemoData(prisma: PrismaClient) {
   const afterHours = await prisma.channel.upsert({
     where: { slug: 'after-hours' },
-    update: {},
+    update: { name: 'Demo Radio', genre: 'Demo audio', city: null, frequency: null, description: 'Sample MP3 tracks for player testing.' },
     create: {
-      slug: 'after-hours', name: 'After Hours', genre: 'Jazz · Soul · Downtempo', city: 'Brooklyn, NY', frequency: '88.7',
-      description: 'A late-night, always-on broadcast, shared by every listener.', type: 'SIMULATED', cycleStart: new Date('2026-09-28T00:00:00.000Z'),
+      slug: 'after-hours', name: 'Demo Radio', genre: 'Demo audio', city: null, frequency: null,
+      description: 'Sample MP3 tracks for player testing.', type: 'SIMULATED', cycleStart: new Date('2026-09-28T00:00:00.000Z'),
     },
   });
   const tracks = [
-    ['Blue in Green', 'Miles Davis', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', 372],
-    ['Peace Piece', 'Bill Evans', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', 415],
-    ['Open Eye Signal', 'Jon Hopkins', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3', 390],
-    ['The Creator Has a Master Plan', 'Pharoah Sanders', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3', 426],
+    ['Demo Track 01', null, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', 372],
+    ['Demo Track 02', null, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', 415],
+    ['Demo Track 03', null, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3', 390],
+    ['Demo Track 04', null, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3', 426],
   ] as const;
   for (const [position, [title, artist, audioUrl, durationSeconds]] of tracks.entries()) {
     await prisma.radioSegment.upsert({
@@ -26,26 +26,29 @@ export async function seedDemoData(prisma: PrismaClient) {
   }
 
   const liveStations = [
-    { slug: 'daylight-fm', name: 'Daylight FM', genre: 'Indie · Electronic', city: 'Los Angeles, CA', frequency: '94.2', currentTitle: 'On the Regular', currentArtist: 'Shamir', currentAlbum: 'Ratchet', streamUrl: 'https://ice1.somafm.com/indiepop-128-mp3' },
-    { slug: 'forma', name: 'Forma', genre: 'Ambient · Modern Classical', city: 'Copenhagen, DK', frequency: '101.3', currentTitle: 'Weightless', currentArtist: 'Marconi Union', currentAlbum: 'Weightless', streamUrl: 'https://ice1.somafm.com/dronezone-128-mp3' },
-    { slug: 'sundown-club', name: 'Sundown Club', genre: 'Disco · House', city: 'London, UK', frequency: '107.8', currentTitle: 'Music Sounds Better With You', currentArtist: 'Stardust', currentAlbum: 'Music Sounds Better With You', streamUrl: 'https://ice1.somafm.com/groovesalad-128-mp3' },
+    { slug: 'daylight-fm', name: 'SomaFM Indie Pop (demo)', genre: 'Demo stream', city: null, frequency: null, currentTitle: null, currentArtist: null, currentAlbum: null, streamUrl: 'https://ice1.somafm.com/indiepop-128-mp3' },
+    { slug: 'forma', name: 'SomaFM Drone Zone (demo)', genre: 'Demo stream', city: null, frequency: null, currentTitle: null, currentArtist: null, currentAlbum: null, streamUrl: 'https://ice1.somafm.com/dronezone-128-mp3' },
+    { slug: 'sundown-club', name: 'SomaFM Groove Salad (demo)', genre: 'Demo stream', city: null, frequency: null, currentTitle: null, currentArtist: null, currentAlbum: null, streamUrl: 'https://ice1.somafm.com/groovesalad-128-mp3' },
   ];
   for (const station of liveStations) {
     await prisma.channel.upsert({ where: { slug: station.slug }, update: station, create: { ...station, type: 'LIVE' } });
   }
 
   const podcasts = await prisma.channel.upsert({
-    where: { slug: 'ajn-podcasts' }, update: {},
-    create: { slug: 'ajn-podcasts', name: 'AJN Podcasts', genre: 'Culture · Conversations', city: 'Studio Series', frequency: 'ON DEMAND', description: 'Long-form conversations from the studio.', type: 'ON_DEMAND' },
+    where: { slug: 'ajn-podcasts' },
+    update: { name: 'Demo Episodes', genre: 'Sample audio', city: null, frequency: null, description: 'Sample MP3 episodes for player testing.' },
+    create: { slug: 'ajn-podcasts', name: 'Demo Episodes', genre: 'Sample audio', city: null, frequency: null, description: 'Sample MP3 episodes for player testing.', type: 'ON_DEMAND' },
   });
   const episodes = [
-    ['The Art of Listening', 'An hour on the records that change the feeling of a room.', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3', new Date('2026-09-26T18:00:00Z'), 3600],
-    ['After the Last Train', 'A late-night conversation about music and memory.', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3', new Date('2026-09-19T18:00:00Z'), 3600],
+    ['the-art-of-listening', 'Demo Episode 01', 'Sample MP3 for player testing; episode metadata was not supplied.', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3'],
+    ['after-the-last-train', 'Demo Episode 02', 'Sample MP3 for player testing; episode metadata was not supplied.', 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3'],
   ] as const;
-  for (const [title, description, audioUrl, publishedAt, durationSeconds] of episodes) {
+  for (const [idSlug, title, description, audioUrl] of episodes) {
+    const id = `${podcasts.id}-${idSlug}`;
     await prisma.podcastEpisode.upsert({
-      where: { id: `${podcasts.id}-${title.toLowerCase().replaceAll(' ', '-')}` }, update: {},
-      create: { id: `${podcasts.id}-${title.toLowerCase().replaceAll(' ', '-')}`, channelId: podcasts.id, title, description, audioUrl, publishedAt, durationSeconds },
+      where: { id },
+      update: { title, description, audioUrl, publishedAt: null, durationSeconds: null },
+      create: { id, channelId: podcasts.id, title, description, audioUrl, publishedAt: null, durationSeconds: null },
     });
   }
 }
